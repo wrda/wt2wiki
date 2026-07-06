@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>WT2 Craft Finder</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Search">
+        <div class="brand">
+          <div class="mark">WT2</div>
+          <div>
+            <h1>Recipe Finder</h1>
+            <p>Wild Terra 2</p>
+          </div>
+        </div>
+
+        <label class="search-box">
+          <span>Search</span>
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Item, skill, material...">
+        </label>
+
+        <div class="filters">
+          <button class="filter-button is-active" data-kind="all" type="button">All</button>
+          <button class="filter-button" data-kind="craft" type="button">Craft</button>
+          <button class="filter-button" data-kind="build" type="button">Build</button>
+          <button class="filter-button" data-kind="process" type="button">Process</button>
+        </div>
+
+        <label class="select-box">
+          <span>Skill</span>
+          <select id="skillFilter">
+            <option value="">All skills</option>
+          </select>
+        </label>
+
+        <div class="result-meta" id="resultMeta"></div>
+        <div class="result-list" id="resultList" aria-live="polite"></div>
+      </aside>
+
+      <main class="workspace">
+        <section class="recipe-stage" aria-label="Recipe">
+          <div class="stage-header">
+            <div>
+              <p class="eyeline" id="recipeKind">Craft</p>
+              <h2 id="recipeTitle">Choose a recipe</h2>
+            </div>
+            <div class="stage-actions">
+              <button id="backButton" class="icon-command" type="button" title="Back">‹</button>
+              <button id="homeButton" class="icon-command" type="button" title="Home">⌂</button>
+            </div>
+          </div>
+
+          <div class="recipe-details" id="recipeDetails"></div>
+          <div class="formula-board" id="formulaBoard"></div>
+        </section>
+
+        <aside class="inspector" aria-label="Item details">
+          <div class="inspector-empty" id="emptyInspector">
+            <h2>Select an item</h2>
+            <p>See recipes that create it, recipes that use it, and drop sources found in the local game data.</p>
+          </div>
+          <div class="inspector-content is-hidden" id="inspectorContent"></div>
+        </aside>
+      </main>
+    </div>
+
+    <script src="data/app-data.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>
