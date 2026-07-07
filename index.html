@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="google-site-verification" content="q0osLpjuSRp4ooRUfcbcg38OcjcWynNNNlCu1UTsSIY">
-    <title>WT2 Craft Finder</title>
+    <title>WT2 Wiki Lab</title>
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
@@ -13,29 +13,31 @@
         <div class="brand">
           <div class="mark">WT2</div>
           <div>
-            <h1>Recipe Finder</h1>
-            <p>Wild Terra 2</p>
+            <h1>WT2 Wiki Lab</h1>
+            <p>Recipes, wiki, and local game data</p>
           </div>
         </div>
 
         <label class="search-box">
           <span>Search</span>
-          <input id="searchInput" type="search" autocomplete="off" placeholder="Item, skill, material...">
+          <input id="searchInput" type="search" autocomplete="off" placeholder="Item, recipe, monster, map, NPC shop...">
         </label>
 
-        <div class="filters">
+        <div class="filters unified-filters" id="recipeFilters">
           <button class="filter-button is-active" data-kind="all" type="button">All</button>
+          <button class="filter-button" data-kind="items" type="button">Items</button>
           <button class="filter-button" data-kind="craft" type="button">Craft</button>
           <button class="filter-button" data-kind="build" type="button">Build</button>
           <button class="filter-button" data-kind="process" type="button">Process</button>
         </div>
 
-        <label class="select-box">
-          <span>Skill</span>
-          <select id="skillFilter">
-            <option value="">All skills</option>
-          </select>
-        </label>
+        <div class="filters wiki-filters" id="wikiFilters">
+          <button class="wiki-filter-button" data-wiki-kind="creature" type="button">Monsters</button>
+          <button class="wiki-filter-button" data-wiki-kind="area" type="button">Maps</button>
+          <button class="wiki-filter-button" data-wiki-kind="fish" type="button">Fishing</button>
+          <button class="wiki-filter-button" data-wiki-kind="shop" type="button">Shops</button>
+          <button class="wiki-filter-button" data-wiki-kind="skill" type="button">Skills</button>
+        </div>
 
         <div class="result-meta" id="resultMeta"></div>
         <div class="result-list" id="resultList" aria-live="polite"></div>
@@ -61,7 +63,7 @@
         <aside class="inspector" aria-label="Item details">
           <div class="inspector-empty" id="emptyInspector">
             <h2>Select an item</h2>
-            <p>See recipes that create it, recipes that use it, and drop sources found in the local game data.</p>
+            <p>See recipes, sources, prices, monsters, maps, fishing data, and shops.</p>
           </div>
           <div class="inspector-content is-hidden" id="inspectorContent"></div>
         </aside>
@@ -69,6 +71,7 @@
     </div>
 
     <script src="data/app-data.js"></script>
+    <script src="data/wiki-data.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

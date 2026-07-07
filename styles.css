@@ -101,6 +101,36 @@ button {
   gap: 7px;
 }
 
+.mode-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+  padding: 4px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.mode-button {
+  height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.mode-button:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.055);
+}
+
+.mode-button.is-active {
+  color: #ffe3a0;
+  background: rgba(213, 168, 79, 0.14);
+}
+
 .search-box span,
 .select-box span {
   color: var(--muted);
@@ -132,6 +162,7 @@ button {
 }
 
 .filter-button,
+.wiki-filter-button,
 .small-button,
 .icon-command {
   border: 1px solid var(--line);
@@ -141,22 +172,33 @@ button {
   cursor: pointer;
 }
 
-.filter-button {
+.filter-button,
+.wiki-filter-button {
   height: 36px;
   font-size: 13px;
 }
 
 .filter-button:hover,
+.wiki-filter-button:hover,
 .small-button:hover,
 .icon-command:hover {
   border-color: rgba(213, 168, 79, 0.55);
   background: var(--panel-3);
 }
 
-.filter-button.is-active {
+.filter-button.is-active,
+.wiki-filter-button.is-active {
   border-color: rgba(213, 168, 79, 0.8);
   color: #ffe3a0;
   background: rgba(213, 168, 79, 0.12);
+}
+
+.wiki-filters {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.unified-filters {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .result-meta {
@@ -210,6 +252,21 @@ button {
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.result-badge {
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-top: 5px;
+  padding: 2px 7px;
+  border: 1px solid rgba(213, 168, 79, 0.28);
+  border-radius: 99px;
+  color: #ffd77b;
+  background: rgba(213, 168, 79, 0.08);
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .workspace {
@@ -315,6 +372,469 @@ button {
   overflow: auto;
   padding: 22px;
   direction: ltr;
+}
+
+.wiki-article {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-height: 220px;
+  max-height: calc(100vh - 195px);
+  overflow: auto;
+  padding: 18px;
+}
+
+.wiki-lead {
+  margin: 0;
+  color: #d9e8df;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.wiki-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(145px, 1fr));
+  gap: 8px;
+}
+
+.wiki-stat {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.wiki-stat span {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-stat strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 5px;
+  color: var(--text);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.wiki-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  color: #d8ece2;
+  background: rgba(88, 184, 107, 0.08);
+  font-size: 12px;
+}
+
+button.wiki-chip {
+  cursor: pointer;
+  font: inherit;
+}
+
+button.wiki-chip:hover {
+  border-color: rgba(238, 198, 108, 0.6);
+  background: rgba(238, 198, 108, 0.12);
+  color: var(--text);
+}
+
+.wiki-chip-icon {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 5px;
+  object-fit: cover;
+}
+
+.wiki-map-preview {
+  overflow: hidden;
+  margin: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.wiki-map-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  background: #07100d;
+}
+
+.wiki-map-preview figcaption {
+  padding: 8px 10px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.map-region-grid,
+.map-entity-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.map-region-card,
+.map-entity-card {
+  min-width: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+  text-align: left;
+}
+
+.map-region-card {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+}
+
+.map-region-card strong {
+  overflow: hidden;
+  color: #f8fff8;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-region-card span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-entity-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+}
+
+button.map-entity-card {
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.map-entity-card:hover {
+  border-color: rgba(238, 198, 108, 0.55);
+  background: rgba(238, 198, 108, 0.09);
+}
+
+.map-entity-card .item-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.map-entity-card strong {
+  display: block;
+  overflow: hidden;
+  color: #f8fff8;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-entity-card small {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-overview {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(213, 168, 79, 0.06);
+}
+
+.skill-overview .item-icon,
+.skill-overview-icon {
+  width: 64px;
+  height: 64px;
+}
+
+.skill-overview-body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.skill-overview-body span,
+.skill-bonus-row {
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.skill-overview-body small {
+  display: block;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-overview-body strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: #fff1c2;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-bonus-list {
+  display: grid;
+  gap: 8px;
+}
+
+.skill-bonus-row {
+  display: grid;
+  gap: 4px;
+}
+
+.skill-bonus-row strong {
+  overflow: hidden;
+  color: #f8fff8;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-bonus-row span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.skill-ability-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+}
+
+.skill-ability-card {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.skill-ability-card .item-icon {
+  width: 46px;
+  height: 46px;
+}
+
+.skill-ability-card strong,
+.skill-ability-card small,
+.skill-ability-card em {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.skill-ability-card strong {
+  color: #f8fff8;
+  font-size: 13px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.skill-ability-card small {
+  margin-top: 3px;
+  color: #ffe0a2;
+  font-size: 11px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.skill-ability-card em {
+  display: -webkit-box;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.monster-skill-grid,
+.monster-drop-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.monster-skill-card,
+.monster-drop-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.035);
+  text-align: left;
+}
+
+button.monster-drop-card {
+  width: 100%;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.monster-drop-card:hover {
+  border-color: rgba(88, 184, 107, 0.55);
+  background: rgba(88, 184, 107, 0.09);
+}
+
+.monster-skill-card .item-icon,
+.monster-drop-card .item-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.monster-skill-card strong,
+.monster-drop-card strong {
+  display: block;
+  overflow: hidden;
+  color: #f8fff8;
+  font-size: 13px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monster-drop-card small {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wiki-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+}
+
+.wiki-table {
+  width: 100%;
+  min-width: 100%;
+  border-collapse: collapse;
+}
+
+.wiki-table th,
+.wiki-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.wiki-table th {
+  color: #ffe3a0;
+  background: rgba(213, 168, 79, 0.08);
+  font-size: 12px;
+}
+
+.wiki-table td {
+  color: #d9e8df;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.wiki-link-row {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(77, 163, 217, 0.22);
+  border-radius: var(--radius);
+  background: rgba(77, 163, 217, 0.07);
+}
+
+.wiki-link-row strong {
+  color: #8fd1ff;
+  font-weight: 800;
+}
+
+.wiki-link-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.wiki-inspector-note {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.wiki-inspector-note strong {
+  color: var(--text);
+}
+
+.wiki-inspector-note span,
+.wiki-inspector-note p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .formula-flow {
@@ -520,7 +1040,7 @@ button {
 
 .inspector-panels {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
   gap: 12px;
   flex: 1 1 auto;
   min-height: 0;
@@ -568,6 +1088,11 @@ button.mini-row {
   cursor: pointer;
 }
 
+button.source-row {
+  cursor: pointer;
+  font: inherit;
+}
+
 .mini-row.has-icon {
   display: grid;
   grid-template-columns: 42px minmax(0, 1fr);
@@ -588,6 +1113,11 @@ button.mini-row {
 button.mini-row:hover {
   border-color: rgba(77, 163, 217, 0.65);
   background: rgba(77, 163, 217, 0.08);
+}
+
+button.source-row:hover {
+  border-color: rgba(213, 168, 79, 0.62);
+  background: rgba(213, 168, 79, 0.08);
 }
 
 .mini-title {
@@ -703,8 +1233,14 @@ button.mini-row:hover {
 
   .sidebar {
     max-height: 52vh;
+    overflow: auto;
+    overscroll-behavior: contain;
     border-right: 0;
     border-bottom: 1px solid var(--line-soft);
+  }
+
+  .sidebar .result-list {
+    overflow: visible;
   }
 
   .workspace {
