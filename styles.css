@@ -76,11 +76,18 @@ button {
   place-items: center;
   width: 46px;
   height: 46px;
+  overflow: hidden;
   border: 1px solid rgba(213, 168, 79, 0.45);
   background: linear-gradient(145deg, rgba(213, 168, 79, 0.16), rgba(88, 184, 107, 0.10));
   color: #ffd77b;
   font-weight: 800;
   border-radius: 7px;
+}
+
+.brand-logo {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
 }
 
 .brand h1 {
