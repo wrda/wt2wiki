@@ -4,16 +4,29 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="google-site-verification" content="q0osLpjuSRp4ooRUfcbcg38OcjcWynNNNlCu1UTsSIY">
-    <title>WT2 Wiki Lab</title>
-    <link rel="stylesheet" href="styles.css?v=20260707-1148">
+    <title>WT2 Wiki Lab | Wild Terra 2 New Lands Wiki</title>
+    <meta name="description" content="WT2 Wiki Lab is a Wild Terra 2 wiki and Wild Terra 2 New Lands wiki for crafting recipes, items, monsters, maps, fishing, farming, pets, shops, and prices.">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "name": "WT2 Wiki Lab",
+        "alternateName": [
+          "WT2 Wiki",
+          "Wild Terra 2 wiki",
+          "Wild Terra 2 New Lands wiki"
+        ]
+      }
+    </script>
+    <link rel="stylesheet" href="styles.css?v=20260709-1010">
   </head>
   <body>
     <div class="app-shell">
       <aside class="sidebar" aria-label="Search">
         <div class="brand">
-          <div class="mark">
-            <img class="brand-logo" src="assets/brand/wt2-logo.png?v=20260707-1148" alt="" aria-hidden="true">
-          </div>
+            <div class="mark">
+              <img class="brand-logo" src="assets/brand/wt2-logo.png?v=20260707-1148" alt="" aria-hidden="true">
+            </div>
           <div>
             <h1>WT2 Wiki Lab</h1>
             <p>Recipes, wiki, and local game data</p>
@@ -31,6 +44,9 @@
           <button class="filter-button" data-kind="craft" type="button">Craft</button>
           <button class="filter-button" data-kind="build" type="button">Build</button>
           <button class="filter-button" data-kind="process" type="button">Process</button>
+          <button class="filter-button" data-kind="cooking" type="button">Cooking</button>
+          <button class="filter-button" data-kind="potion" type="button">Potions</button>
+          <button class="filter-button" data-kind="sell" type="button">Sell</button>
         </div>
 
         <div class="filters wiki-filters" id="wikiFilters">
@@ -39,6 +55,8 @@
           <button class="wiki-filter-button" data-wiki-kind="fish" type="button">Fishing</button>
           <button class="wiki-filter-button" data-wiki-kind="shop" type="button">Shops</button>
           <button class="wiki-filter-button" data-wiki-kind="skill" type="button">Skills</button>
+          <button class="wiki-filter-button" data-wiki-kind="farming" type="button">Farming</button>
+          <button class="wiki-filter-button" data-wiki-kind="pet" type="button">Pets</button>
         </div>
 
         <div class="result-meta" id="resultMeta"></div>
@@ -72,8 +90,8 @@
       </main>
     </div>
 
-    <script src="data/app-data.js?v=20260707-1109"></script>
-    <script src="data/wiki-data.js?v=20260707-1109"></script>
-    <script src="app.js?v=20260707-1109"></script>
+    <script src="data/app-data.js?v=20260708-2015"></script>
+    <script src="data/wiki-data.js?v=20260709-1010"></script>
+    <script src="app.js?v=20260709-1010"></script>
   </body>
 </html>

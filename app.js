@@ -9,11 +9,24 @@
   const wikiEntries = wikiData.entries || [];
   const itemEconomy = wikiData.itemEconomy || {};
   const shopsByItem = wikiData.shopsByItem || {};
+  const accessibleBuyUpNames = accessibleBuyUpBuyerNames(wikiEntries);
+  const buyUpBuyers = (wikiData.buyUpBuyers || [])
+    .filter((buyer) => accessibleBuyUpNames.has(normalize(buyer.name)));
   const recipesById = new Map(recipes.map((recipe) => [recipe.id, recipe]));
   const wikiEntriesById = new Map(wikiEntries.map((entry) => [entry.id, entry]));
+  const wikiEntryByItemId = new Map(wikiEntries.filter((entry) => entry.itemId).map((entry) => [entry.itemId, entry]));
+  const itemsByLookup = buildItemLookup();
+  const buyUpBuyersById = new Map(buyUpBuyers.map((buyer) => [buyer.id, buyer]));
+  const buyUpBuyerSpecialItems = new Map(buyUpBuyers.map((buyer) => [buyer.id, new Set(buyer.specialItemIds || [])]));
   const mapEntriesByLookup = new Map();
   const recipesByResult = new Map();
+  const recipesByStation = new Map();
+  const recipesByTool = new Map();
+  const recipesByRequirement = new Map();
+  const toolIconCache = new Map();
+  const craftSkillsByItem = new Map();
   const usageByItem = new Map();
+  const fishButcheringYieldsByFish = buildFishButcheringYields();
 
   for (const entry of wikiEntries) {
     if (entry.type !== "area") continue;
@@ -26,6 +39,16 @@
 
   for (const recipe of recipes) {
     addToMapList(recipesByResult, recipe.result, recipe);
+    if (recipe.result && recipe.skill) addToMapList(craftSkillsByItem, recipe.result, recipe.skill);
+    for (const stationId of uniqueStationIds(recipe)) {
+      addToMapList(recipesByStation, stationId, recipe);
+    }
+    if (recipe.toolRequired) {
+      addToMapList(recipesByTool, recipe.toolRequired, recipe);
+    }
+    for (const requirementId of recipe.bonusesRequired || []) {
+      addToMapList(recipesByRequirement, requirementId, recipe);
+    }
     for (const material of recipe.materials || []) {
       addToMapList(usageByItem, material.item, recipe);
     }
@@ -38,6 +61,10 @@
     wikiKind: "all",
     current: null,
     history: [],
+    sellItems: [],
+    sellTab: "calculator",
+    cookingTab: "all",
+    goldGoblinMode: "recommended",
   };
 
   const els = {
@@ -64,10 +91,7 @@
   function initialize() {
     bindEvents();
     syncModeChrome();
-    const firstRecipe = recipes.find((recipe) => recipe.kind === "craft") || recipes[0];
-    if (firstRecipe) {
-      navigate({ type: "recipe", id: firstRecipe.id }, true);
-    }
+    navigate({ type: "home" }, true);
     renderSearchResults();
   }
 
@@ -98,11 +122,82 @@
 
     els.homeButton.addEventListener("click", () => {
       state.history = [];
-      const firstRecipe = recipes.find((recipe) => recipe.kind === "craft") || recipes[0];
-      if (firstRecipe) {
-        navigate({ type: "recipe", id: firstRecipe.id });
-      }
+      navigate({ type: "home" });
     });
+
+    bindItemTooltipEvents();
+  }
+
+  function bindItemTooltipEvents() {
+    const tooltip = document.createElement("div");
+    tooltip.className = "item-tooltip is-hidden";
+    document.body.appendChild(tooltip);
+
+    let activeTarget = null;
+
+    const showTooltip = (event) => {
+      const eventTarget = event.target instanceof Element ? event.target : null;
+      const target = eventTarget?.closest("[data-pet-tooltip-html], [data-pet-tooltip], [data-item-id]");
+      if (!target) return;
+      if (target === activeTarget && !tooltip.classList.contains("is-hidden")) {
+        moveItemTooltip(event, tooltip);
+        return;
+      }
+      const html = target.dataset.petTooltipHtml || "";
+      const text = target.dataset.petTooltip || itemTooltipText(target.dataset.itemId);
+      if (!html && !text) return;
+      activeTarget = target;
+      tooltip.classList.toggle("is-pet-tooltip", Boolean(html));
+      if (html) {
+        tooltip.innerHTML = html;
+      } else {
+        tooltip.textContent = text;
+      }
+      tooltip.classList.remove("is-hidden");
+      moveItemTooltip(event, tooltip);
+    };
+
+    document.addEventListener("pointerover", showTooltip);
+    document.addEventListener("mouseover", showTooltip);
+
+    document.addEventListener("pointermove", (event) => {
+      if (!activeTarget || tooltip.classList.contains("is-hidden")) return;
+      moveItemTooltip(event, tooltip);
+    });
+
+    document.addEventListener("mousemove", (event) => {
+      if (!activeTarget || tooltip.classList.contains("is-hidden")) {
+        showTooltip(event);
+        return;
+      }
+      moveItemTooltip(event, tooltip);
+    });
+
+    const hideTooltip = (event) => {
+      if (!activeTarget) return;
+      if (event.relatedTarget && activeTarget.contains(event.relatedTarget)) return;
+      activeTarget = null;
+      tooltip.classList.add("is-hidden");
+      tooltip.classList.remove("is-pet-tooltip");
+    };
+
+    document.addEventListener("pointerout", hideTooltip);
+    document.addEventListener("mouseout", hideTooltip);
+  }
+
+  function moveItemTooltip(event, tooltip) {
+    const margin = 14;
+    const rect = tooltip.getBoundingClientRect();
+    let left = event.clientX + margin;
+    let top = event.clientY + margin;
+    if (left + rect.width + margin > window.innerWidth) {
+      left = Math.max(margin, event.clientX - rect.width - margin);
+    }
+    if (top + rect.height + margin > window.innerHeight) {
+      top = Math.max(margin, event.clientY - rect.height - margin);
+    }
+    tooltip.style.left = `${left}px`;
+    tooltip.style.top = `${top}px`;
   }
 
   function syncModeChrome() {
@@ -116,6 +211,29 @@
     state.kind = filter || "all";
     state.wikiKind = wikiFilterTypes().has(state.kind) ? state.kind : "all";
     syncUnifiedFilterButtons();
+    if (state.kind === "sell") {
+      navigate({ type: "sell" });
+      return;
+    }
+    if (state.kind === "cooking") {
+      navigate({ type: "cooking" });
+      return;
+    }
+    if (state.kind === "all") {
+      navigate({ type: "home" });
+      return;
+    }
+
+    let target = firstTargetForFilter(state.kind, state.query);
+    if (!target && state.query) {
+      state.query = "";
+      els.searchInput.value = "";
+      target = firstTargetForFilter(state.kind, "");
+    }
+    if (target) {
+      navigate(target);
+      return;
+    }
     renderSearchResults();
   }
 
@@ -140,7 +258,43 @@
     renderSearchResults();
   }
 
+  function firstTargetForFilter(filter, rawQuery) {
+    const query = normalize(rawQuery);
+    if (filter === "items") {
+      const item = Object.values(items)
+        .filter((record) => itemMatches(record, query))
+        .sort((a, b) => sortItemsForQuery(a, b, query))[0];
+      return item ? { type: "item", id: item.id } : null;
+    }
+
+    if (recipeFilterTypes().has(filter)) {
+      if (filter === "cooking") return { type: "cooking" };
+      if (filter === "potion") return { type: "potion" };
+      const recipe = recipes
+        .filter((record) => recipeMatchesFilter(record, filter))
+        .filter((record) => !query || recipeMatches(record, query))
+        .sort(sortRecipes)[0];
+      return recipe ? { type: "recipe", id: recipe.id } : null;
+    }
+
+    if (wikiFilterTypes().has(filter)) {
+      const entry = wikiEntries
+        .filter(isPublicWikiEntry)
+        .filter((record) => record.type === filter)
+        .filter((record) => !query || wikiEntryMatches(record, query))
+        .sort(sortWikiEntries)[0];
+      return entry ? { type: "wiki", id: entry.id } : null;
+    }
+
+    return null;
+  }
+
   function renderSearchResults() {
+    if (state.kind === "sell") {
+      renderSellSearchResults();
+      return;
+    }
+
     const query = normalize(state.query);
     const filter = state.kind || "all";
     const includeItems = filter === "all" || filter === "items";
@@ -148,7 +302,7 @@
     const includeWiki = filter === "all" || wikiFilterTypes().has(filter);
 
     const filteredRecipes = includeRecipes ? recipes
-      .filter((recipe) => filter === "all" || filter === "items" || recipe.kind === filter)
+      .filter((recipe) => recipeMatchesFilter(recipe, filter))
       .filter((recipe) => !query || recipeMatches(recipe, query))
       .sort(sortRecipes) : [];
 
@@ -165,7 +319,7 @@
       .sort(sortWikiEntries) : [];
 
     const matchingItems = allMatchingItems.slice(0, filter === "items" ? 160 : 35);
-    const recipeLimit = filter === "all" ? 95 : 160;
+    const recipeLimit = (filter === "cooking" || filter === "potion") ? filteredRecipes.length : (filter === "all" ? 95 : 160);
     const wikiLimit = filter === "all" ? 95 : 180;
 
     els.resultList.innerHTML = "";
@@ -204,6 +358,29 @@
     }
   }
 
+  function renderSellSearchResults() {
+    const query = normalize(state.query);
+    const sellable = Object.values(items)
+      .filter((item) => isItemSellable(item.id))
+      .filter((item) => !query || itemMatches(item, query))
+      .sort((a, b) => sortItemsForQuery(a, b, query));
+    const limited = sellable.slice(0, 180);
+
+    els.resultList.innerHTML = "";
+    els.resultMeta.textContent = `${sellable.length} sellable items` + (sellable.length > limited.length ? `, showing ${limited.length}` : "");
+
+    for (const item of limited) {
+      els.resultList.appendChild(renderSellResultItemRow(item));
+    }
+
+    if (!sellable.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note";
+      empty.textContent = "No sellable items matched. Try Small hides, fish, ore, leather, or a crafted item name.";
+      els.resultList.appendChild(empty);
+    }
+  }
+
   function renderWikiSearchResults() {
     const query = normalize(state.query);
     const filtered = wikiEntries
@@ -238,6 +415,7 @@
     const row = document.createElement("button");
     row.type = "button";
     row.className = "result-row";
+    attachItemTooltip(row, item.id);
     if (state.current?.type === "item" && state.current.id === item.id) row.classList.add("is-active");
     row.appendChild(renderIcon(item.id));
 
@@ -247,7 +425,7 @@
     const sources = sourcesByItem[item.id]?.length || 0;
     const shops = shopsByItem[item.id]?.length || 0;
     body.innerHTML = `
-      <span class="result-title" dir="auto">${escapeHtml(item.name)}</span>
+      <span class="result-title" dir="auto">${escapeHtml(itemName(item.id))}</span>
       <span class="result-subtitle">Item · crafted by: ${produces} · used in: ${uses} · sources: ${sources} · shops: ${shops}</span>
     `;
     row.appendChild(body);
@@ -255,18 +433,47 @@
     return row;
   }
 
+  function renderSellResultItemRow(item) {
+    const economy = itemEconomy[item.id] || {};
+    const best = bestBuyUpBuyerForItem(item.id);
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "result-row";
+    attachItemTooltip(row, item.id);
+    row.appendChild(renderIcon(item.id));
+
+    const body = document.createElement("span");
+    body.innerHTML = `
+      <span class="result-title" dir="auto">${escapeHtml(itemName(item.id))}</span>
+      <span class="result-subtitle">Sell item · base ${formatCurrencyHtml(economy.buyUpPrice)} · best ${escapeHtml(best?.name || "buyer")}</span>
+      <span class="result-badge">Click to add</span>
+    `;
+    row.appendChild(body);
+    row.addEventListener("click", () => {
+      addSellItem(item.id);
+      renderSellCalculator();
+      renderItemInspector(item.id);
+      renderSearchResults();
+    });
+    return row;
+  }
+
   function renderResultRecipeRow(recipe) {
     const row = document.createElement("button");
     row.type = "button";
     row.className = "result-row";
+    attachItemTooltip(row, recipe.result);
     if (state.current?.type === "recipe" && state.current.id === recipe.id) row.classList.add("is-active");
     row.appendChild(renderIcon(recipe.result));
 
     const body = document.createElement("span");
     const context = recipeContext(recipe);
+    const kindLabel = state.kind === "cooking" && isCookingRecipe(recipe)
+      ? cookingRecipeKindLabel(recipe)
+      : recipeKindLabel(recipe.kind);
     body.innerHTML = `
       <span class="result-title" dir="auto">${escapeHtml(itemName(recipe.result))}</span>
-      <span class="result-subtitle">${recipeKindLabel(recipe.kind)} · ${escapeHtml(context)}${recipe.skill ? " · " + escapeHtml(displaySkill(recipe.skill)) : ""}</span>
+      <span class="result-subtitle">${escapeHtml(kindLabel)} · ${escapeHtml(context)}${recipe.skill ? " · " + escapeHtml(displaySkill(recipe.skill)) : ""}${recipe.hidden ? " · Hidden" : ""}</span>
     `;
     row.appendChild(body);
     row.addEventListener("click", () => navigate({ type: "recipe", id: recipe.id }));
@@ -305,6 +512,24 @@
       renderRecipe(recipesById.get(next.id));
       const recipe = recipesById.get(next.id);
       if (recipe) renderItemInspector(recipe.result);
+    } else if (next.type === "station") {
+      state.mode = "recipes";
+      setActiveModeButton();
+      syncModeChrome();
+      renderStationRecipes(next.id);
+      renderItemInspector(next.id);
+    } else if (next.type === "tool") {
+      state.mode = "recipes";
+      setActiveModeButton();
+      syncModeChrome();
+      renderToolRecipes(next.id);
+      renderItemInspector(next.id);
+    } else if (next.type === "requirement") {
+      state.mode = "recipes";
+      setActiveModeButton();
+      syncModeChrome();
+      renderRequirementRecipes(next.id);
+      renderItemInspector(next.id);
     } else if (next.type === "item") {
       state.mode = "recipes";
       setActiveModeButton();
@@ -315,6 +540,34 @@
       setActiveModeButton();
       syncModeChrome();
       renderWikiEntry(wikiEntriesById.get(next.id));
+    } else if (next.type === "sell") {
+      state.mode = "recipes";
+      state.kind = "sell";
+      state.wikiKind = "all";
+      setActiveModeButton();
+      syncModeChrome();
+      renderSellCalculator();
+    } else if (next.type === "cooking") {
+      state.mode = "recipes";
+      state.kind = "cooking";
+      state.wikiKind = "all";
+      setActiveModeButton();
+      syncModeChrome();
+      renderCookingBrowser();
+    } else if (next.type === "potion") {
+      state.mode = "recipes";
+      state.kind = "potion";
+      state.wikiKind = "all";
+      setActiveModeButton();
+      syncModeChrome();
+      renderPotionBrowser();
+    } else if (next.type === "home") {
+      state.mode = "recipes";
+      state.kind = "all";
+      state.wikiKind = "all";
+      setActiveModeButton();
+      syncModeChrome();
+      renderHomePage();
     }
     renderSearchResults();
   }
@@ -345,6 +598,598 @@
     els.formulaBoard.appendChild(board);
   }
 
+  function renderHomePage() {
+    els.recipeKind.textContent = "Home";
+    els.recipeTitle.textContent = "Welcome to WT2 Wiki Lab";
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(pill("Local game data"));
+    els.recipeDetails.appendChild(pill("No external links"));
+    els.recipeDetails.appendChild(pill("Recipes, maps, monsters, fishing, shops, and sell prices"));
+
+    const page = document.createElement("div");
+    page.className = "home-page";
+    page.innerHTML = `
+      <section class="home-hero">
+        <strong>Find what you need without leaving the site.</strong>
+        <p>Search items, recipes, monsters, maps, fishing catches, baits, shops, and sell values from the local WT2 data gathered for this wiki.</p>
+      </section>
+      <section class="home-report-card">
+        <strong>Have feedback or suggestions?</strong>
+        <p>Let us know on Discord: <span>wrda_man</span></p>
+      </section>
+      <section class="home-card-grid">
+        <article>
+          <span>Search</span>
+          <strong>Use English item names</strong>
+          <p>Try names like Leather, Pike, Bear, Tanning Vat, or a map name. Internal item ids also work when a public name is unclear.</p>
+        </article>
+        <article>
+          <span>Craft</span>
+          <strong>Follow stations and tools</strong>
+          <p>Station, tool, and requirement chips are clickable. Open one to see every recipe that can be made there or with that tool.</p>
+        </article>
+        <article>
+          <span>Wiki</span>
+          <strong>Use maps as a hub</strong>
+          <p>Maps group their regions, monsters, NPCs, and fish. Click a map from a monster or fish page to jump to the full map entry.</p>
+        </article>
+        <article>
+          <span>Fishing</span>
+          <strong>Check baits and yields</strong>
+          <p>Baits and butchered fish yields are clickable item cards, so you can trace where each material comes from.</p>
+        </article>
+        <article>
+          <span>Sell</span>
+          <strong>Use the best buyer calculator</strong>
+          <p>The Sell tab estimates buy-up payouts and automatically chooses the highest reachable buyer from the available shop data.</p>
+        </article>
+        <article>
+          <span>Notes</span>
+          <strong>Some data can be incomplete</strong>
+          <p>If an item has no source, it may come from server-side logic, a hidden event, or data that is not exposed in the local files.</p>
+        </article>
+      </section>
+    `;
+
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(page);
+    renderHomeInspector();
+  }
+
+  function renderHomeInspector() {
+    els.inspectorContent.classList.add("is-hidden");
+    els.inspectorContent.classList.remove("pet-inspector-content");
+    els.emptyInspector.classList.remove("is-hidden");
+    const title = els.emptyInspector.querySelector("h2");
+    const copy = els.emptyInspector.querySelector("p");
+    if (title) title.textContent = "Pick a result";
+    if (copy) copy.textContent = "Open an item, recipe, monster, map, fish, skill, or shop to see detailed local data.";
+  }
+
+  function renderSellCalculator() {
+    els.recipeKind.textContent = "Sell";
+    els.recipeTitle.textContent = state.sellTab === "gold" ? "Gold Goblin" : "Sell calculator";
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(renderSellTabControls());
+    els.recipeDetails.appendChild(pill("Best buyer selected automatically"));
+
+    if (state.sellTab === "gold") {
+      els.recipeDetails.appendChild(pill(`${goldGoblinCandidates().length} craftable sell routes`));
+      renderGoldGoblinPanel();
+      return;
+    }
+
+    els.recipeDetails.appendChild(pill("Buying up"));
+    els.recipeDetails.appendChild(pill(`${buyUpBuyers.length} reachable buyers from map data`));
+    renderSellCalculatorPanel();
+  }
+
+  function renderSellTabControls() {
+    const tabs = document.createElement("div");
+    tabs.className = "sell-tabs";
+    [
+      ["calculator", "Calculator"],
+      ["gold", "Gold Goblin"],
+    ].forEach(([id, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sell-tab";
+      button.textContent = label;
+      button.title = `Open ${label}`;
+      button.setAttribute("aria-pressed", state.sellTab === id ? "true" : "false");
+      button.classList.toggle("is-active", state.sellTab === id);
+      button.addEventListener("click", () => {
+        state.sellTab = id;
+        renderSellCalculator();
+      });
+      tabs.appendChild(button);
+    });
+    return tabs;
+  }
+
+  function renderCookingBrowser() {
+    const cookingOnlyRecipes = cookingRecipes().filter((recipe) => !isFermentationTabRecipe(recipe)).sort(sortCookingRecipes);
+    const fermentedRecipes = cookingRecipes().filter(isFermentationTabRecipe).sort(sortCookingRecipes);
+    const activeRecipes = state.cookingTab === "fermented" ? fermentedRecipes : cookingOnlyRecipes;
+    const hiddenCount = activeRecipes.filter((recipe) => recipe.hidden).length;
+
+    els.recipeKind.textContent = "Cooking";
+    els.recipeTitle.textContent = state.cookingTab === "fermented" ? "عصائر" : "Cooking recipes";
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(renderCookingTabControls(cookingOnlyRecipes.length, fermentedRecipes.length));
+    els.recipeDetails.appendChild(pill(`${activeRecipes.length} recipes`));
+    els.recipeDetails.appendChild(pill(`${hiddenCount} hidden included`));
+    if (state.cookingTab === "fermented") {
+      els.recipeDetails.appendChild(pill("Juices and fermented drinks"));
+    } else {
+      els.recipeDetails.appendChild(pill("Cookery, ovens, campfires, and food processes"));
+    }
+
+    const panel = document.createElement("div");
+    panel.className = "station-recipe-browser cooking-recipe-browser";
+
+    const grid = document.createElement("div");
+    grid.className = "station-recipe-grid cooking-recipe-grid";
+    for (const recipe of activeRecipes) {
+      grid.appendChild(renderCookingRecipeCard(recipe));
+    }
+
+    if (!activeRecipes.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No cooking recipes were found in the local data.";
+      grid.appendChild(empty);
+    }
+
+    panel.appendChild(grid);
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+    renderCookingInspector();
+  }
+
+  function renderCookingTabControls(allCount, fermentedCount) {
+    const tabs = document.createElement("div");
+    tabs.className = "sell-tabs cooking-tabs";
+    [
+      ["all", `All cooking (${allCount})`],
+      ["fermented", `عصائر (${fermentedCount})`],
+    ].forEach(([id, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sell-tab cooking-tab";
+      button.textContent = label;
+      button.title = `Open ${label}`;
+      button.setAttribute("aria-pressed", state.cookingTab === id ? "true" : "false");
+      button.classList.toggle("is-active", state.cookingTab === id);
+      button.addEventListener("click", () => {
+        state.cookingTab = id;
+        renderCookingBrowser();
+        renderSearchResults();
+      });
+      tabs.appendChild(button);
+    });
+    return tabs;
+  }
+
+  function renderCookingRecipeCard(recipe) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "station-recipe-card cooking-recipe-card";
+    attachItemTooltip(card, recipe.result);
+    if (recipe.hidden) card.classList.add("is-hidden-recipe");
+    if (isFermentationTabRecipe(recipe)) card.classList.add("is-fermented-recipe");
+    card.appendChild(renderIcon(recipe.result));
+
+    const body = document.createElement("span");
+    body.className = "station-recipe-body";
+    const materials = (recipe.materials || []).slice(0, 4).map(formatMaterialLabel).join(" · ");
+    const more = (recipe.materials || []).length > 4 ? ` · +${(recipe.materials || []).length - 4} more` : "";
+    const stationText = stationNames(recipe).slice(0, 3).join(", ");
+    const badges = [
+      cookingRecipeKindLabel(recipe),
+    ].filter(Boolean).join(" · ");
+    const meta = [
+      badges,
+      recipe.skill ? displaySkill(recipe.skill) : "",
+      recipe.level ? `level ${recipe.level}` : "",
+      recipe.timeMs ? formatTime(recipe.timeMs) : "",
+      stationText,
+    ].filter(Boolean).join(" · ");
+
+    body.innerHTML = `
+      <span class="station-recipe-title" dir="auto">${escapeHtml(itemName(recipe.result))}${recipe.amount > 1 ? ` x${recipe.amount}` : ""}</span>
+      <span class="station-recipe-meta">${escapeHtml(meta)}</span>
+      <span class="station-recipe-materials">${escapeHtml(materials || "No materials")}${escapeHtml(more)}</span>
+    `;
+
+    card.appendChild(body);
+    card.addEventListener("click", () => navigate({ type: "recipe", id: recipe.id }));
+    return card;
+  }
+
+  function renderCookingInspector() {
+    els.inspectorContent.classList.add("is-hidden");
+    els.inspectorContent.classList.remove("pet-inspector-content");
+    els.emptyInspector.classList.remove("is-hidden");
+    const title = els.emptyInspector.querySelector("h2");
+    const copy = els.emptyInspector.querySelector("p");
+    if (title) title.textContent = "Select a cooking recipe";
+    if (copy) copy.textContent = "Hover a recipe for the item description, or open it to inspect ingredients, stations, tools, and sell data.";
+  }
+
+  function renderPotionBrowser() {
+    const activeRecipes = potionRecipes().sort(sortPotionRecipes);
+    const hiddenCount = activeRecipes.filter((recipe) => recipe.hidden).length;
+
+    els.recipeKind.textContent = "Potions";
+    els.recipeTitle.textContent = "Potions";
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(pill(`${activeRecipes.length} recipes`));
+    els.recipeDetails.appendChild(pill(`${hiddenCount} hidden included`));
+    els.recipeDetails.appendChild(pill("Healing, buffs, searching potions, and useful medicines"));
+
+    const panel = document.createElement("div");
+    panel.className = "station-recipe-browser cooking-recipe-browser potion-recipe-browser";
+
+    const grid = document.createElement("div");
+    grid.className = "station-recipe-grid cooking-recipe-grid potion-recipe-grid";
+    for (const recipe of activeRecipes) {
+      grid.appendChild(renderPotionRecipeCard(recipe));
+    }
+
+    if (!activeRecipes.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No potion or healing recipes were found in the local data.";
+      grid.appendChild(empty);
+    }
+
+    panel.appendChild(grid);
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+    renderPotionInspector();
+  }
+
+  function renderPotionRecipeCard(recipe) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "station-recipe-card cooking-recipe-card potion-recipe-card";
+    card.dataset.recipeId = recipe.id;
+    attachItemTooltip(card, recipe.result);
+    if (recipe.hidden) card.classList.add("is-hidden-recipe");
+    card.appendChild(renderIcon(recipe.result));
+
+    const body = document.createElement("span");
+    body.className = "station-recipe-body";
+    const materials = (recipe.materials || []).slice(0, 4).map(formatMaterialLabel).join(" · ");
+    const more = (recipe.materials || []).length > 4 ? ` · +${(recipe.materials || []).length - 4} more` : "";
+    const stationText = stationNames(recipe).slice(0, 3).join(", ");
+    const meta = [
+      potionRecipeKindLabel(recipe),
+      recipe.skill ? displaySkill(recipe.skill) : "",
+      recipe.level ? `level ${recipe.level}` : "",
+      recipe.timeMs ? formatTime(recipe.timeMs) : "",
+      stationText,
+    ].filter(Boolean).join(" · ");
+
+    body.innerHTML = `
+      <span class="station-recipe-title" dir="auto">${escapeHtml(itemName(recipe.result))}${recipe.amount > 1 ? ` x${recipe.amount}` : ""}</span>
+      <span class="station-recipe-meta">${escapeHtml(meta)}</span>
+      <span class="station-recipe-materials">${escapeHtml(materials || "No materials")}${escapeHtml(more)}</span>
+    `;
+
+    card.appendChild(body);
+    card.addEventListener("click", () => navigate({ type: "recipe", id: recipe.id }));
+    return card;
+  }
+
+  function renderPotionInspector() {
+    els.inspectorContent.classList.add("is-hidden");
+    els.inspectorContent.classList.remove("pet-inspector-content");
+    els.emptyInspector.classList.remove("is-hidden");
+    const title = els.emptyInspector.querySelector("h2");
+    const copy = els.emptyInspector.querySelector("p");
+    if (title) title.textContent = "Select a potion recipe";
+    if (copy) copy.textContent = "Hover a potion for its item description, or open it to inspect ingredients, stations, tools, and sell data.";
+  }
+
+  function renderSellCalculatorPanel() {
+    const panel = document.createElement("div");
+    panel.className = "sell-calculator";
+
+    const bestNote = document.createElement("div");
+    bestNote.className = "sell-best-note";
+    bestNote.textContent = "Each item is priced with the highest paying buyer found in the local game data.";
+    panel.appendChild(bestNote);
+
+    const list = document.createElement("div");
+    list.className = "sell-list";
+    const rows = state.sellItems.filter((row) => isItemSellable(row.itemId));
+    let total = 0;
+
+    if (!rows.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No items selected.";
+      list.appendChild(empty);
+    }
+
+    for (const row of rows) {
+      const item = itemRecord(row.itemId);
+      const quote = buyUpQuote(row.itemId, row.quantity, "best");
+      total += quote.payout;
+
+      const card = document.createElement("div");
+      card.className = "sell-row";
+      card.appendChild(renderIcon(row.itemId));
+
+      const body = document.createElement("div");
+      body.className = "sell-row-body";
+      body.innerHTML = `
+        <strong dir="auto">${escapeHtml(item.name)}</strong>
+        <small>${escapeHtml(quote.buyer?.name || "Buyer")} · ${escapeHtml(formatPercent(quote.percent))}${quote.special ? " · special" : " · usual"} · base ${formatCurrencyHtml(quote.base)}</small>
+      `;
+
+      const qty = document.createElement("input");
+      qty.type = "number";
+      qty.min = "0";
+      qty.step = "1";
+      qty.value = String(row.quantity);
+      qty.className = "sell-qty";
+      qty.setAttribute("aria-label", `${item.name} quantity`);
+      let quantityTimer = null;
+      qty.addEventListener("input", () => {
+        window.clearTimeout(quantityTimer);
+        quantityTimer = window.setTimeout(() => {
+          updateSellItemQuantity(row.itemId, qty.value);
+          renderSellCalculator();
+        }, 180);
+      });
+      qty.addEventListener("change", () => {
+        window.clearTimeout(quantityTimer);
+        updateSellItemQuantity(row.itemId, qty.value);
+        renderSellCalculator();
+      });
+
+      const payout = document.createElement("div");
+      payout.className = "sell-payout";
+      payout.innerHTML = `
+        <span>Payout</span>
+        <strong>${formatCurrencyHtml(quote.payout)}</strong>
+      `;
+
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "icon-command sell-remove";
+      remove.title = "Remove";
+      remove.textContent = "×";
+      remove.addEventListener("click", () => {
+        removeSellItem(row.itemId);
+        renderSellCalculator();
+        renderSearchResults();
+      });
+
+      body.appendChild(qty);
+      card.append(body, payout, remove);
+      list.appendChild(card);
+    }
+
+    panel.appendChild(list);
+
+    const totalRow = document.createElement("div");
+    totalRow.className = "sell-total";
+    totalRow.innerHTML = `
+      <span>Total payout</span>
+      <strong>${formatCurrencyHtml(total)}</strong>
+    `;
+    panel.appendChild(totalRow);
+
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+  }
+
+  function renderGoldGoblinPanel() {
+    const panel = document.createElement("div");
+    panel.className = "gold-goblin";
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "gold-toolbar";
+
+    const modes = document.createElement("div");
+    modes.className = "gold-mode-tabs";
+    [
+      ["recommended", "Recommended"],
+      ["profit", "Profit"],
+      ["easy", "Easy"],
+      ["fast", "Fast"],
+    ].forEach(([id, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "gold-mode";
+      button.textContent = label;
+      button.classList.toggle("is-active", state.goldGoblinMode === id);
+      button.addEventListener("click", () => {
+        state.goldGoblinMode = id;
+        renderGoldGoblinPanel();
+      });
+      modes.appendChild(button);
+    });
+
+    const candidates = goldGoblinCandidates();
+    const summary = document.createElement("div");
+    summary.className = "gold-summary";
+    summary.innerHTML = `<strong>${candidates.length}</strong><span>routes</span>`;
+    toolbar.append(modes, summary);
+    panel.appendChild(toolbar);
+
+    const list = document.createElement("div");
+    list.className = "gold-list";
+
+    if (!candidates.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No profitable craft routes found from the current local data.";
+      list.appendChild(empty);
+    }
+
+    for (const candidate of candidates.slice(0, 40)) {
+      list.appendChild(renderGoldGoblinCard(candidate));
+    }
+
+    panel.appendChild(list);
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+  }
+
+  function renderGoldGoblinCard(candidate) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "gold-card";
+    card.appendChild(renderIcon(candidate.itemId));
+
+    const body = document.createElement("span");
+    body.className = "gold-card-body";
+    const materialPreview = candidate.materials
+      .slice(0, 4)
+      .map((material) => `${escapeHtml(itemName(material.item))} x${escapeHtml(String(material.quantity))}`)
+      .join(" · ");
+    const moreMaterials = candidate.materials.length > 4 ? ` · +${candidate.materials.length - 4} more` : "";
+    const station = candidate.stationNames.length ? candidate.stationNames.join(", ") : "No station";
+    const recipeMeta = [
+      recipeKindLabel(candidate.recipe.kind),
+      candidate.skill ? displaySkill(candidate.skill) : "",
+      candidate.level ? `level ${candidate.level}` : "",
+      candidate.timeLabel,
+      station,
+    ].filter(Boolean).join(" · ");
+
+    body.innerHTML = `
+      <span class="gold-title" dir="auto">${escapeHtml(candidate.name)}${candidate.amount > 1 ? ` x${candidate.amount}` : ""}</span>
+      <span class="gold-meta">${escapeHtml(recipeMeta)}</span>
+      <span class="gold-materials">${materialPreview || "No materials"}${escapeHtml(moreMaterials)}</span>
+      <span class="gold-reasons">${candidate.reasons.map(escapeHtml).join(" · ")}</span>
+    `;
+
+    const metrics = document.createElement("span");
+    metrics.className = "gold-metrics";
+    metrics.innerHTML = `
+      <span class="gold-metric"><em>Payout</em><strong>${formatCurrencyHtml(candidate.payout)}</strong></span>
+      <span class="gold-metric"><em>Est. profit</em><strong>${formatCurrencyHtml(candidate.profit)}</strong></span>
+      <span class="gold-metric"><em>Buyer</em><strong>${escapeHtml(candidate.buyerName)}</strong></span>
+      <span class="gold-metric"><em>Ease</em><strong>${candidate.ease}</strong></span>
+    `;
+
+    card.append(body, metrics);
+    card.addEventListener("click", () => {
+      navigate({ type: "recipe", id: candidate.recipe.id });
+    });
+    return card;
+  }
+
+  function goldGoblinCandidates() {
+    return recipes
+      .map(buildGoldGoblinCandidate)
+      .filter(Boolean)
+      .sort(sortGoldGoblinCandidates);
+  }
+
+  function buildGoldGoblinCandidate(recipe) {
+    if (!recipe || !recipe.result || recipe.hidden || recipe.purchaseLock) return null;
+    if (recipe.kind !== "craft" && recipe.kind !== "process") return null;
+    if (!isItemSellable(recipe.result)) return null;
+
+    const materials = (recipe.materials || [])
+      .filter((material) => material.item)
+      .map((material) => ({
+        ...material,
+        quantity: normalizeMaterialQuantity(material),
+      }))
+      .filter((material) => material.quantity > 0);
+    if (!materials.length) return null;
+
+    const amount = normalizeSellQuantity(recipe.amount || 1) || 1;
+    const quote = buyUpQuote(recipe.result, amount, "best");
+    if (quote.raw <= 0) return null;
+
+    let materialCostRaw = 0;
+    let unknownMaterials = 0;
+    let totalMaterialQty = 0;
+    for (const material of materials) {
+      totalMaterialQty += material.quantity;
+      if (isItemSellable(material.item)) {
+        materialCostRaw += buyUpQuote(material.item, material.quantity, "best").raw;
+      } else {
+        unknownMaterials += 1;
+      }
+    }
+
+    const level = Number(recipe.level) || 0;
+    const timeMs = Number(recipe.timeMs) || 0;
+    const timeMinutes = timeMs > 0 ? timeMs / 60000 : 0;
+    const stationCount = recipe.stations?.length || 0;
+    const difficulty = 1 +
+      (materials.length * 2) +
+      (Math.log2(totalMaterialQty + 1) * 1.4) +
+      (level * 0.9) +
+      Math.min(timeMinutes / 4, 6) +
+      (stationCount * 0.8) +
+      (unknownMaterials * 6);
+    const profitRaw = quote.raw - materialCostRaw;
+    const scoreBase = profitRaw > 0 ? profitRaw * (unknownMaterials ? 0.45 : 1) : 0;
+    if (scoreBase <= 0) return null;
+    const ease = Math.max(1, Math.round(100 / difficulty));
+    const lowLevelBoost = 1 / (1 + (level / 18));
+    const confidenceBoost = unknownMaterials ? 0.75 : 1;
+    const score = Math.log10(scoreBase + 1) * ease * lowLevelBoost * confidenceBoost;
+
+    const reasons = [];
+    if (level <= 10) reasons.push("low level");
+    if (materials.length <= 3) reasons.push("few materials");
+    if (timeMs > 0 && timeMs <= 60000) reasons.push("fast craft");
+    if (quote.special) reasons.push(`${quote.buyer?.name || "Buyer"} special`);
+    if (unknownMaterials) reasons.push(`${unknownMaterials} material values unknown`);
+    if (!reasons.length) reasons.push("steady buyer value");
+
+    return {
+      recipe,
+      itemId: recipe.result,
+      name: itemName(recipe.result),
+      amount,
+      payout: quote.payout,
+      profit: Math.max(0, Math.floor(scoreBase + 0.000001)),
+      score,
+      ease,
+      buyerName: quote.buyer?.name || "Buyer",
+      level,
+      skill: recipe.skill,
+      timeMs,
+      timeLabel: formatTime(timeMs),
+      materials,
+      materialCostRaw,
+      unknownMaterials,
+      stationNames: stationNames(recipe),
+      reasons: reasons.slice(0, 4),
+    };
+  }
+
+  function sortGoldGoblinCandidates(a, b) {
+    if (state.goldGoblinMode === "profit") {
+      return (b.profit - a.profit) || (b.payout - a.payout) || a.name.localeCompare(b.name);
+    }
+    if (state.goldGoblinMode === "easy") {
+      return (b.ease - a.ease) || (b.score - a.score) || a.name.localeCompare(b.name);
+    }
+    if (state.goldGoblinMode === "fast") {
+      return ((a.timeMs || Infinity) - (b.timeMs || Infinity)) || (b.score - a.score) || a.name.localeCompare(b.name);
+    }
+    return (b.score - a.score) || (b.profit - a.profit) || a.name.localeCompare(b.name);
+  }
+
+  function normalizeMaterialQuantity(material) {
+    const quantity = parsePriceValue(material.amountMax || material.amount || 1);
+    return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+  }
+
   function renderRecipe(recipe, highlightedItem) {
     if (!recipe) return;
 
@@ -353,14 +1198,11 @@
     els.recipeDetails.innerHTML = "";
     els.recipeDetails.appendChild(pill(recipeContext(recipe)));
     if (recipe.processName) els.recipeDetails.appendChild(pill(`process: ${recipe.processName}`));
-    if (recipe.stations?.length) els.recipeDetails.appendChild(pill(`station: ${stationNames(recipe).join(", ")}`));
     if (recipe.skill) els.recipeDetails.appendChild(pill(`${displaySkill(recipe.skill)} · level ${recipe.level || 0}`));
     if (recipe.timeMs) els.recipeDetails.appendChild(pill(`time ${formatTime(recipe.timeMs)}`));
     if (recipe.fuels?.length) els.recipeDetails.appendChild(pill(`fuel options: ${recipe.fuels.map(formatMaterialLabel).slice(0, 4).join(", ")}`));
-    if (recipe.toolRequired) els.recipeDetails.appendChild(pill(`tool: ${itemName(recipe.toolRequired)}`));
-    if (recipe.bonusesRequired?.length) {
-      els.recipeDetails.appendChild(pill(`station/requirement: ${recipe.bonusesRequired.map(itemName).join(", ")}`));
-    }
+    const requirementStrip = renderRecipeRequirementStrip(recipe);
+    if (requirementStrip) els.recipeDetails.appendChild(requirementStrip);
     if (recipe.hidden) els.recipeDetails.appendChild(pill("Hidden"));
     if (recipe.purchaseLock) els.recipeDetails.appendChild(pill("Purchase lock"));
 
@@ -382,6 +1224,233 @@
     els.formulaBoard.appendChild(flow);
   }
 
+  function renderStationButtons(stations) {
+    const strip = document.createElement("div");
+    strip.className = "station-link-strip";
+    for (const stationId of uniqueStationIds({ stations })) {
+      strip.appendChild(renderStationButton(stationId));
+    }
+    return strip;
+  }
+
+  function renderStationButton(stationId, options = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "station-chip";
+    button.title = `Show recipes crafted at ${itemName(stationId)}`;
+    button.setAttribute("aria-label", `Show recipes crafted at ${itemName(stationId)}`);
+    button.appendChild(renderIcon(stationId));
+
+    const text = document.createElement("span");
+    text.dir = "auto";
+    text.textContent = options.showKind ? `Station · ${itemName(stationId)}` : itemName(stationId);
+    button.appendChild(text);
+    button.addEventListener("click", () => navigate({ type: "station", id: stationId }));
+    return button;
+  }
+
+  function renderRecipeRequirementStrip(recipe) {
+    const strip = document.createElement("div");
+    strip.className = "recipe-requirement-strip";
+    let count = 0;
+
+    for (const stationId of uniqueStationIds(recipe)) {
+      strip.appendChild(renderStationButton(stationId, { showKind: true }));
+      count += 1;
+    }
+
+    if (recipe.toolRequired) {
+      strip.appendChild(renderToolButton(recipe.toolRequired, { showKind: true }));
+      count += 1;
+    }
+
+    for (const requirementId of recipe.bonusesRequired || []) {
+      strip.appendChild(renderRequirementButton(requirementId));
+      count += 1;
+    }
+
+    return count ? strip : null;
+  }
+
+  function renderStationRecipes(stationId) {
+    const list = (recipesByStation.get(stationId) || []).slice().sort(sortRecipes);
+    els.recipeKind.textContent = "Station";
+    els.recipeTitle.textContent = itemName(stationId);
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(renderStationButtons([{ name: stationId }]));
+    els.recipeDetails.appendChild(pill(`${list.length} recipes crafted here`));
+
+    const panel = document.createElement("div");
+    panel.className = "station-recipe-browser";
+
+    const grid = document.createElement("div");
+    grid.className = "station-recipe-grid";
+    const limited = list.slice(0, 160);
+
+    for (const recipe of limited) {
+      grid.appendChild(renderStationRecipeCard(recipe));
+    }
+
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No recipes were found for this station in the local data.";
+      grid.appendChild(empty);
+    } else if (list.length > limited.length) {
+      const more = document.createElement("div");
+      more.className = "empty-note sell-empty";
+      more.textContent = `Showing the first ${limited.length} of ${list.length}. Use search to narrow the list.`;
+      grid.appendChild(more);
+    }
+
+    panel.appendChild(grid);
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+  }
+
+  function renderStationRecipeCard(recipe) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "station-recipe-card";
+    card.appendChild(renderIcon(recipe.result));
+
+    const body = document.createElement("span");
+    body.className = "station-recipe-body";
+    const materials = (recipe.materials || []).slice(0, 4).map(formatMaterialLabel).join(" · ");
+    const more = (recipe.materials || []).length > 4 ? ` · +${(recipe.materials || []).length - 4} more` : "";
+    const meta = [
+      recipeKindLabel(recipe.kind),
+      recipe.skill ? displaySkill(recipe.skill) : "",
+      recipe.level ? `level ${recipe.level}` : "",
+      recipe.timeMs ? formatTime(recipe.timeMs) : "",
+    ].filter(Boolean).join(" · ");
+    body.innerHTML = `
+      <span class="station-recipe-title" dir="auto">${escapeHtml(itemName(recipe.result))}${recipe.amount > 1 ? ` x${recipe.amount}` : ""}</span>
+      <span class="station-recipe-meta">${escapeHtml(meta)}</span>
+      <span class="station-recipe-materials">${escapeHtml(materials || "No materials")}${escapeHtml(more)}</span>
+    `;
+
+    card.appendChild(body);
+    card.addEventListener("click", () => navigate({ type: "recipe", id: recipe.id }));
+    return card;
+  }
+
+  function renderToolButtons(toolIds) {
+    const strip = document.createElement("div");
+    strip.className = "tool-link-strip";
+    const seen = new Set();
+    for (const toolId of toolIds || []) {
+      if (!toolId || seen.has(toolId)) continue;
+      seen.add(toolId);
+      strip.appendChild(renderToolButton(toolId));
+    }
+    return strip;
+  }
+
+  function renderToolButton(toolId, options = {}) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tool-chip";
+    button.title = `Show recipes requiring ${itemName(toolId)}`;
+    button.setAttribute("aria-label", `Show recipes requiring ${itemName(toolId)}`);
+    button.appendChild(renderToolIcon(toolId));
+
+    const text = document.createElement("span");
+    text.dir = "auto";
+    text.textContent = options.showKind ? `Tool · ${itemName(toolId)}` : itemName(toolId);
+    button.appendChild(text);
+    button.addEventListener("click", () => navigate({ type: "tool", id: toolId }));
+    return button;
+  }
+
+  function renderToolRecipes(toolId) {
+    const list = (recipesByTool.get(toolId) || []).slice().sort(sortRecipes);
+    els.recipeKind.textContent = "Tool";
+    els.recipeTitle.textContent = itemName(toolId);
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(renderToolButtons([toolId]));
+    els.recipeDetails.appendChild(pill(`${list.length} recipes require this tool`));
+
+    const panel = document.createElement("div");
+    panel.className = "station-recipe-browser tool-recipe-browser";
+
+    const grid = document.createElement("div");
+    grid.className = "station-recipe-grid";
+    const limited = list.slice(0, 160);
+
+    for (const recipe of limited) {
+      grid.appendChild(renderStationRecipeCard(recipe));
+    }
+
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No recipes were found for this tool in the local data.";
+      grid.appendChild(empty);
+    } else if (list.length > limited.length) {
+      const more = document.createElement("div");
+      more.className = "empty-note sell-empty";
+      more.textContent = `Showing the first ${limited.length} of ${list.length}. Use search to narrow the list.`;
+      grid.appendChild(more);
+    }
+
+    panel.appendChild(grid);
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+  }
+
+  function renderRequirementButton(requirementId) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "requirement-chip";
+    button.title = `Show recipes requiring ${itemName(requirementId)}`;
+    button.setAttribute("aria-label", `Show recipes requiring ${itemName(requirementId)}`);
+    button.appendChild(renderIcon(requirementId));
+
+    const text = document.createElement("span");
+    text.dir = "auto";
+    text.textContent = `Required · ${itemName(requirementId)}`;
+    button.appendChild(text);
+    button.addEventListener("click", () => navigate({ type: "requirement", id: requirementId }));
+    return button;
+  }
+
+  function renderRequirementRecipes(requirementId) {
+    const list = (recipesByRequirement.get(requirementId) || []).slice().sort(sortRecipes);
+    els.recipeKind.textContent = "Requirement";
+    els.recipeTitle.textContent = itemName(requirementId);
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(renderRequirementButton(requirementId));
+    els.recipeDetails.appendChild(pill(`${list.length} recipes require this item or building`));
+
+    const panel = document.createElement("div");
+    panel.className = "station-recipe-browser requirement-recipe-browser";
+
+    const grid = document.createElement("div");
+    grid.className = "station-recipe-grid";
+    const limited = list.slice(0, 160);
+
+    for (const recipe of limited) {
+      grid.appendChild(renderStationRecipeCard(recipe));
+    }
+
+    if (!list.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No recipes were found for this requirement in the local data.";
+      grid.appendChild(empty);
+    } else if (list.length > limited.length) {
+      const more = document.createElement("div");
+      more.className = "empty-note sell-empty";
+      more.textContent = `Showing the first ${limited.length} of ${list.length}. Use search to narrow the list.`;
+      grid.appendChild(more);
+    }
+
+    panel.appendChild(grid);
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+  }
+
   function renderWikiEntry(entry) {
     if (!entry) return;
 
@@ -401,6 +1470,10 @@
 
     if (entry.type === "area" && entry.image) {
       article.appendChild(renderWikiMapImage(entry));
+    }
+
+    if (entry.type === "creature") {
+      article.appendChild(renderCreatureOverview(entry));
     }
 
     const leadText = entry.description ? cleanupPublicText(entry.description) : publicSummary(entry);
@@ -426,6 +1499,16 @@
       if (abilitiesBlock) article.appendChild(abilitiesBlock);
     }
 
+    if (entry.type === "farming") {
+      const farmingBlock = renderFarmingOverview(entry);
+      if (farmingBlock) article.appendChild(farmingBlock);
+    }
+
+    if (entry.type === "pet") {
+      const petBlock = renderPetOverview(entry);
+      if (petBlock) article.appendChild(petBlock);
+    }
+
     if (entry.type === "area") {
       const mapRegions = renderMapRegions(entry);
       if (mapRegions) article.appendChild(mapRegions);
@@ -433,6 +1516,8 @@
       if (mapFish) article.appendChild(mapFish);
       const mapMonsters = renderMapEntityGrid("Monsters", entry.monsters, "creature");
       if (mapMonsters) article.appendChild(mapMonsters);
+      const mapSpecialMonsters = renderMapSpecialMonsters(entry.specialMonsters);
+      if (mapSpecialMonsters) article.appendChild(mapSpecialMonsters);
       const mapNpcs = renderMapEntityGrid("NPCs", entry.npcs, "shop");
       if (mapNpcs) article.appendChild(mapNpcs);
     }
@@ -442,6 +1527,11 @@
       if (abilitiesBlock) article.appendChild(abilitiesBlock);
       const dropsBlock = renderMonsterDrops(entry);
       if (dropsBlock) article.appendChild(dropsBlock);
+    }
+
+    if (entry.type === "fish") {
+      const butcherBlock = renderFishButcheringYields(entry);
+      if (butcherBlock) article.appendChild(butcherBlock);
     }
 
     for (const list of entry.lists || []) {
@@ -456,7 +1546,11 @@
     }
 
     for (const table of entry.tables || []) {
-      article.appendChild(renderWikiTable(table));
+      if (entry.type === "shop" && isShopItemsTable(table)) {
+        article.appendChild(renderShopItemsTable(table));
+      } else {
+        article.appendChild(renderWikiTable(table));
+      }
     }
 
     if (entry.itemId && items[entry.itemId]) {
@@ -473,6 +1567,8 @@
 
     if (entry.itemId && items[entry.itemId]) {
       renderItemInspector(entry.itemId);
+    } else if (entry.type === "pet") {
+      renderPetInspector(entry, (entry.pets || [])[0], 1);
     } else {
       renderWikiInspector(entry);
     }
@@ -493,6 +1589,33 @@
     figure.appendChild(caption);
 
     block.appendChild(figure);
+    return block;
+  }
+
+  function renderCreatureOverview(entry) {
+    const block = sectionBlock("Monster overview");
+    const wrap = document.createElement("div");
+    wrap.className = "wiki-overview-card";
+    const icon = renderWikiIcon(entry, "large");
+    icon.classList.add("wiki-overview-icon");
+    wrap.appendChild(icon);
+
+    const details = document.createElement("div");
+    details.className = "wiki-overview-body";
+    const rows = [
+      ["Level", entry.level || entry.stats?.level || ""],
+      ["Found in", (entry.lists || []).find((list) => list.title === "Found in")?.items?.slice(0, 2).join(", ") || ""],
+      ["Drops", entry.drops?.length ? `${entry.drops.length} known` : ""],
+      ["Skills", entry.abilities?.length ? `${entry.abilities.length} listed` : ""],
+    ].filter(([, value]) => value);
+    details.innerHTML = rows.map(([label, value]) => `
+      <span>
+        <small>${escapeHtml(label)}</small>
+        <strong>${escapeHtml(value)}</strong>
+      </span>
+    `).join("");
+    wrap.appendChild(details);
+    block.appendChild(wrap);
     return block;
   }
 
@@ -558,7 +1681,8 @@
         card.addEventListener("click", () => navigate({ type: "wiki", id: item.id }));
       }
       card.className = "map-entity-card";
-      card.appendChild(renderInlineImage(item.image, item.name, fallbackType === "shop" ? "NPC" : "MO"));
+      const entry = item.id ? wikiEntriesById.get(item.id) : null;
+      card.appendChild(entry ? renderWikiIcon(entry) : renderInlineImage(item.image, item.name, fallbackType === "shop" ? "NPC" : "MO"));
       const meta = mapEntityMeta(item, fallbackType);
       const body = document.createElement("span");
       body.innerHTML = `
@@ -578,6 +1702,85 @@
     return block;
   }
 
+  function renderMapSpecialMonsters(entries) {
+    const list = entries || [];
+    if (!list.length) return null;
+
+    const block = sectionBlock("Special monsters", list.length);
+    const grid = document.createElement("div");
+    grid.className = "special-monster-grid";
+
+    for (const item of list.slice(0, 120)) {
+      const card = document.createElement("div");
+      card.className = "special-monster-card";
+
+      const header = document.createElement(item.id && wikiEntriesById.has(item.id) ? "button" : "div");
+      header.className = "map-entity-card special-monster-head";
+      if (header.tagName === "BUTTON") {
+        header.type = "button";
+        header.addEventListener("click", () => navigate({ type: "wiki", id: item.id }));
+      }
+
+      const entry = item.id ? wikiEntriesById.get(item.id) : null;
+      header.appendChild(entry ? renderWikiIcon(entry) : renderInlineImage(item.image, item.name, "SM"));
+
+      const body = document.createElement("span");
+      const sources = (item.sources || []).slice(0, 3).join(", ");
+      const meta = [
+        item.level ? `level ${item.level}` : "",
+        sources,
+      ].filter(Boolean).join(" · ");
+      body.innerHTML = `
+        <strong dir="auto">${escapeHtml(item.name)}</strong>
+        <small>${escapeHtml(meta || cleanupPublicText(item.summary || "Special monster"))}</small>
+      `;
+      header.appendChild(body);
+      card.appendChild(header);
+
+      const drops = item.drops || [];
+      const dropRow = document.createElement("div");
+      dropRow.className = "special-monster-drops";
+      if (drops.length) {
+        for (const drop of drops.slice(0, 6)) {
+          const dropChip = document.createElement(items[drop.itemId] ? "button" : "span");
+          dropChip.className = "special-drop-chip";
+          const label = [drop.name, drop.amount ? `x${drop.amount}` : "", drop.chance].filter(Boolean).join(" · ");
+          dropChip.title = label;
+          dropChip.setAttribute("aria-label", label);
+          if (dropChip.tagName === "BUTTON") {
+            dropChip.type = "button";
+            dropChip.addEventListener("click", () => navigate({ type: "item", id: drop.itemId }));
+          }
+          dropChip.appendChild(items[drop.itemId] ? renderIcon(drop.itemId) : renderInlineImage(drop.icon, drop.name, initials(drop.name)));
+          dropRow.appendChild(dropChip);
+        }
+        if (drops.length > 6) {
+          const more = document.createElement("span");
+          more.className = "special-drop-more";
+          more.textContent = `+${drops.length - 6}`;
+          dropRow.appendChild(more);
+        }
+      } else {
+        const empty = document.createElement("span");
+        empty.className = "special-drop-empty";
+        empty.textContent = "No drops listed";
+        dropRow.appendChild(empty);
+      }
+      card.appendChild(dropRow);
+      grid.appendChild(card);
+    }
+
+    if (list.length > 120) {
+      const more = document.createElement("div");
+      more.className = "empty-note";
+      more.textContent = `Showing the first 120 of ${list.length}. Use search to narrow the list.`;
+      block.appendChild(more);
+    }
+
+    block.appendChild(grid);
+    return block;
+  }
+
   function mapEntityMeta(item, fallbackType) {
     if (fallbackType === "shop") {
       return cleanupPublicText(item.summary || "NPC shop.");
@@ -589,9 +1792,25 @@
   }
 
   function renderWikiListChip(entry, list, item) {
-    const mapEntry = entry.type === "creature" && list.title === "Found in"
+    const mapEntry = (entry.type === "creature" || entry.type === "fish") && list.title === "Found in"
       ? mapEntryForLabel(item)
       : null;
+    const linkedItemId = entry.type === "fish" && list.title === "Baits"
+      ? itemIdForLabel(item)
+      : null;
+
+    if (linkedItemId) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "wiki-chip wiki-chip-button wiki-item-chip";
+      chip.title = `Open ${itemName(linkedItemId)}`;
+      chip.appendChild(renderIcon(linkedItemId));
+      const label = document.createElement("span");
+      label.textContent = item;
+      chip.appendChild(label);
+      chip.addEventListener("click", () => navigate({ type: "item", id: linkedItemId }));
+      return chip;
+    }
 
     const chip = document.createElement(mapEntry ? "button" : "span");
     chip.className = "wiki-chip";
@@ -620,8 +1839,32 @@
     return chip;
   }
 
+  function itemIdForLabel(label) {
+    const key = normalize(label);
+    if (itemsByLookup.has(key)) return itemsByLookup.get(key);
+    const compact = key.replace(/\s+/g, "");
+    if (itemsByLookup.has(compact)) return itemsByLookup.get(compact);
+    return "";
+  }
+
   function mapEntryForLabel(label) {
-    return mapEntriesByLookup.get(normalize(label)) || null;
+    const full = normalize(label);
+    if (mapEntriesByLookup.has(full)) return mapEntriesByLookup.get(full);
+
+    const primary = mapNameFromLocation(label);
+    const primaryKey = normalize(primary);
+    if (mapEntriesByLookup.has(primaryKey)) return mapEntriesByLookup.get(primaryKey);
+
+    for (const entry of wikiEntries) {
+      if (entry.type !== "area") continue;
+      const key = normalize(entry.name);
+      if (full.startsWith(`${key} `) || full.includes(` ${key} `)) return entry;
+    }
+    return null;
+  }
+
+  function mapNameFromLocation(label) {
+    return String(label || "").split("·")[0].trim();
   }
 
   function renderWikiStats(stats) {
@@ -771,6 +2014,928 @@
     return block;
   }
 
+  function renderFishButcheringYields(entry) {
+    const fishItemId = entry.itemId || String(entry.id || "").replace(/^fish:/, "");
+    const yields = fishButcheringYieldsByFish.get(fishItemId) || [];
+    if (!yields.length) return null;
+
+    const block = sectionBlock("Butchering yields", yields.length);
+    const grid = document.createElement("div");
+    grid.className = "monster-drop-grid fish-yield-grid";
+    for (const yieldItem of yields) {
+      const card = document.createElement(items[yieldItem.itemId] ? "button" : "div");
+      if (card.tagName === "BUTTON") {
+        card.type = "button";
+        card.addEventListener("click", () => navigate({ type: "item", id: yieldItem.itemId }));
+      }
+      card.className = "monster-drop-card fish-yield-card";
+      card.appendChild(items[yieldItem.itemId] ? renderIcon(yieldItem.itemId) : renderInlineImage(yieldItem.icon, yieldItem.name, initials(yieldItem.name)));
+      const meta = [
+        yieldItem.kind || "Butchering",
+        yieldItem.amount ? `x${yieldItem.amount}` : "",
+        yieldItem.chance || "",
+        yieldItem.level ? `level ${yieldItem.level}` : "",
+      ].filter(Boolean).join(" · ");
+      const body = document.createElement("span");
+      body.innerHTML = `
+        <strong>${escapeHtml(yieldItem.name)}</strong>
+        <small>${escapeHtml(meta)}</small>
+      `;
+      card.appendChild(body);
+      grid.appendChild(card);
+    }
+    block.appendChild(grid);
+    return block;
+  }
+
+  function renderFarmingOverview(entry) {
+    const fragment = document.createDocumentFragment();
+    const crops = entry.crops || [];
+    const fertilizers = entry.fertilizers || [];
+    const tools = entry.tools || [];
+    const cropCards = [];
+    const updateCropCards = (fertilizer) => {
+      for (const { card, crop } of cropCards) {
+        updateCropCardFertilizer(card, crop, fertilizer);
+      }
+    };
+
+    const planner = renderFertilizerPlanner(fertilizers, updateCropCards);
+    if (planner) fragment.appendChild(planner);
+
+    if (crops.length) {
+      const block = sectionBlock("Plantable crops", crops.length);
+      const grid = document.createElement("div");
+      grid.className = "farming-grid";
+      for (const crop of crops) {
+        const card = renderCropCard(crop);
+        cropCards.push({ card, crop });
+        grid.appendChild(card);
+      }
+      block.appendChild(grid);
+      fragment.appendChild(block);
+    }
+
+    if (fertilizers.length) {
+      const block = sectionBlock("Fertilizers", fertilizers.length);
+      const grid = document.createElement("div");
+      grid.className = "farming-grid fertilizer-grid";
+      for (const fertilizer of fertilizers) {
+        grid.appendChild(renderFertilizerCard(fertilizer));
+      }
+      block.appendChild(grid);
+      fragment.appendChild(block);
+    }
+
+    if (tools.length) {
+      const block = sectionBlock("Farming tools", tools.length);
+      const grid = document.createElement("div");
+      grid.className = "farming-grid farming-tool-grid";
+      for (const tool of tools) {
+        grid.appendChild(renderFarmingToolCard(tool));
+      }
+      block.appendChild(grid);
+      fragment.appendChild(block);
+    }
+
+    return fragment;
+  }
+
+  function renderFertilizerPlanner(fertilizers, onChange) {
+    if (!fertilizers.length) return null;
+
+    const block = sectionBlock("Fertilizer planner");
+    const wrap = document.createElement("div");
+    wrap.className = "planner-card fertilizer-planner";
+
+    const controls = document.createElement("div");
+    controls.className = "planner-controls";
+
+    const fertilizerOptions = [noFertilizerOption(), ...fertilizers];
+    const fertilizerDropdown = createPlannerDropdown(
+      "Fertilizer",
+      fertilizerOptions,
+      (fertilizer) => fertilizer.id,
+      (fertilizer) => fertilizer.name,
+    );
+    controls.append(fertilizerDropdown.root);
+    wrap.appendChild(controls);
+
+    const status = document.createElement("div");
+    status.className = "planner-result fertilizer-planner-status";
+    wrap.appendChild(status);
+
+    const update = () => {
+      const selected = fertilizerOptions.find((item) => item.id === fertilizerDropdown.value()) || fertilizerOptions[0];
+      const activeFertilizer = selected.isNoFertilizer ? null : selected;
+      status.innerHTML = fertilizerPlannerStatusHtml(activeFertilizer);
+      onChange?.(activeFertilizer);
+    };
+
+    fertilizerDropdown.onChange(update);
+    update();
+
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function noFertilizerOption() {
+    return {
+      id: "__no_fertilizer__",
+      name: "No fertilizer",
+      isNoFertilizer: true,
+      speed: 1,
+      gather: 1,
+      seeds: 1,
+      seedLevel: 0,
+      selectChance: 0,
+    };
+  }
+
+  function createPlannerDropdown(label, entries, getValue, getLabel) {
+    const root = document.createElement("div");
+    root.className = "planner-dropdown";
+    const labelEl = document.createElement("span");
+    labelEl.className = "planner-dropdown-label";
+    labelEl.textContent = label;
+    root.appendChild(labelEl);
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "planner-dropdown-button";
+    button.setAttribute("aria-expanded", "false");
+    const buttonText = document.createElement("span");
+    const caret = document.createElement("span");
+    caret.className = "planner-dropdown-caret";
+    caret.textContent = "v";
+    button.append(buttonText, caret);
+    root.appendChild(button);
+
+    const menu = document.createElement("div");
+    menu.className = "planner-dropdown-menu";
+    menu.setAttribute("role", "listbox");
+    root.appendChild(menu);
+
+    const handlers = [];
+    const optionButtons = [];
+    let selectedValue = entries.length ? getValue(entries[0]) : "";
+
+    const close = () => {
+      root.classList.remove("is-open");
+      button.setAttribute("aria-expanded", "false");
+    };
+    const setValue = (value, silent = false) => {
+      selectedValue = value;
+      const current = entries.find((entry) => getValue(entry) === selectedValue) || entries[0];
+      buttonText.textContent = current ? getLabel(current) : "Choose";
+      for (const option of optionButtons) {
+        const active = option.dataset.value === selectedValue;
+        option.classList.toggle("is-active", active);
+        option.setAttribute("aria-selected", active ? "true" : "false");
+      }
+      if (!silent) handlers.forEach((handler) => handler(selectedValue));
+    };
+
+    for (const entry of entries) {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "planner-dropdown-option";
+      option.dataset.value = getValue(entry);
+      option.setAttribute("role", "option");
+      option.textContent = getLabel(entry);
+      option.addEventListener("click", () => {
+        setValue(option.dataset.value);
+        close();
+      });
+      optionButtons.push(option);
+      menu.appendChild(option);
+    }
+
+    button.addEventListener("click", () => {
+      const willOpen = !root.classList.contains("is-open");
+      const panel = root.closest(".planner-card") || document;
+      for (const dropdown of panel.querySelectorAll(".planner-dropdown.is-open")) {
+        if (dropdown !== root) {
+          dropdown.classList.remove("is-open");
+          dropdown.querySelector(".planner-dropdown-button")?.setAttribute("aria-expanded", "false");
+        }
+      }
+      root.classList.toggle("is-open", willOpen);
+      button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    });
+
+    root.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        close();
+        button.focus();
+      }
+    });
+    root.addEventListener("focusout", () => {
+      window.setTimeout(() => {
+        if (!root.contains(document.activeElement)) close();
+      }, 0);
+    });
+
+    setValue(selectedValue, true);
+    return {
+      root,
+      value: () => selectedValue,
+      onChange: (handler) => handlers.push(handler),
+    };
+  }
+
+  function fertilizerPlannerStatusHtml(fertilizer) {
+    if (!fertilizer) {
+      return `
+        <div class="planner-summary">
+          ${renderInlineDataIcon("", "No fertilizer")}
+          <span>
+            <strong>No fertilizer</strong>
+            <small>Plantable crops show their normal grow time, harvest, and seed return values.</small>
+          </span>
+        </div>
+      `;
+    }
+    return `
+      <div class="planner-summary">
+        ${renderInlineDataIcon(fertilizer.icon, fertilizer.name)}
+        <span>
+          <strong>${escapeHtml(fertilizer.name)}</strong>
+          <small>Adjusted grow time, harvest, and seed return are applied below.</small>
+        </span>
+      </div>
+    `;
+  }
+
+  function renderCropCard(crop) {
+    const card = document.createElement("div");
+    card.className = "farming-card crop-card";
+
+    const head = document.createElement("div");
+    head.className = "farming-card-head";
+    head.appendChild(renderInlineImage(crop.image, crop.name, "CR"));
+    const title = document.createElement("span");
+    title.innerHTML = `
+      <strong>${escapeHtml(crop.name)}</strong>
+      <small>${escapeHtml(crop.level ? `Agriculture level ${crop.level}` : "Agriculture crop")}</small>
+    `;
+    head.appendChild(title);
+    card.appendChild(head);
+
+    const summary = document.createElement("div");
+    summary.className = "crop-summary-grid";
+    summary.innerHTML = `
+      <span><small>Agriculture lvl</small><strong>${escapeHtml(crop.level ? String(crop.level) : "Unknown")}</strong></span>
+      <span><small>Grow time</small><strong class="crop-speed-value">Unknown</strong></span>
+      <span><small>Harvest amount</small><strong class="crop-harvest-value">Unknown</strong></span>
+      <span><small>Seed yield</small><strong class="crop-seed-value">Unknown</strong></span>
+    `;
+    card.appendChild(summary);
+
+    const note = document.createElement("div");
+    note.className = "crop-fertilizer-note";
+    note.innerHTML = `
+      <strong class="crop-fertilizer-name">No fertilizer</strong>
+      <small class="crop-fertilizer-meta">Normal values from local files · ${(crop.sizes || []).map(plotSizeShortLabel).join(", ") || "local data"}</small>
+    `;
+    card.appendChild(note);
+
+    card.appendChild(renderCropYieldSection("Plant with", crop.seeds || [], "No seed row found", "Seed or sprout"));
+    card.appendChild(renderCropYieldSection("Harvest result", crop.harvest || [], "No harvest row found", "Harvest output", { role: "harvest" }));
+    if ((crop.seedYields || []).length) {
+      card.appendChild(renderCropYieldSection("Seed return", crop.seedYields || [], "No seed yield row found", "Seed yield", { role: "seed-yield" }));
+    }
+    updateCropCardFertilizer(card, crop, null);
+    return card;
+  }
+
+  function updateCropCardFertilizer(card, crop, fertilizer) {
+    const active = Boolean(fertilizer);
+    card.classList.toggle("has-fertilizer", active);
+
+    const name = card.querySelector(".crop-fertilizer-name");
+    const meta = card.querySelector(".crop-fertilizer-meta");
+    const speedValue = card.querySelector(".crop-speed-value");
+    const harvestValue = card.querySelector(".crop-harvest-value");
+    const seedValue = card.querySelector(".crop-seed-value");
+    if (name) name.textContent = active ? fertilizer.name : "No fertilizer";
+    if (meta) {
+      const normalGrowTime = summarizeCropGrowthTime(crop, 1);
+      const currentGrowTime = summarizeCropGrowthTime(crop, active ? fertilizer.speed : 1);
+      const parts = active
+        ? [
+            `Normal grow time ${normalGrowTime}`,
+            currentGrowTime !== normalGrowTime ? `Adjusted ${currentGrowTime}` : "",
+            `Seed level ${signedNumberOrZero(fertilizer.seedLevel)}`,
+            `Species chance ${signedNumberOrZero(fertilizer.selectChance)}`,
+          ]
+        : [
+            `Grow time ${currentGrowTime}`,
+            "Normal values from local files",
+            (crop.sizes || []).map(plotSizeShortLabel).join(", ") || "local data",
+          ];
+      meta.textContent = parts.filter(Boolean).join(" · ");
+    }
+    if (speedValue) speedValue.textContent = summarizeCropGrowthTime(crop, active ? fertilizer.speed : 1);
+    if (harvestValue) harvestValue.textContent = summarizeCropAmounts(crop.harvest || [], active ? fertilizer.gather : 1);
+    if (seedValue) seedValue.textContent = summarizeCropAmounts(crop.seedYields || [], active ? fertilizer.seeds : 1);
+
+    updateCropYieldSection(card, "harvest", crop.harvest || [], "No harvest row found", "Harvest output", active ? fertilizer.gather : 1);
+    updateCropYieldSection(card, "seed-yield", crop.seedYields || [], "No seed yield row found", "Seed yield", active ? fertilizer.seeds : 1);
+  }
+
+  function renderFertilizerCard(fertilizer) {
+    const card = document.createElement("div");
+    card.className = "farming-card fertilizer-card";
+
+    const head = document.createElement("button");
+    head.type = "button";
+    head.className = "farming-card-head farming-card-button";
+    if (fertilizer.itemId && items[fertilizer.itemId]) {
+      head.addEventListener("click", () => navigate({ type: "item", id: fertilizer.itemId }));
+    }
+    head.appendChild(fertilizer.itemId && items[fertilizer.itemId]
+      ? renderIcon(fertilizer.itemId)
+      : renderInlineImage(fertilizer.icon, fertilizer.name, "FT"));
+    const title = document.createElement("span");
+    title.innerHTML = `
+      <strong>${escapeHtml(fertilizer.name)}</strong>
+      <small class="fertilizer-description">${escapeHtml(cleanupPublicText(fertilizer.description || "Fertilizer"))}</small>
+    `;
+    head.appendChild(title);
+    card.appendChild(head);
+
+    const stats = document.createElement("div");
+    stats.className = "fertilizer-effect-list";
+    stats.innerHTML = renderFertilizerEffectsHtml(fertilizer, "");
+    card.appendChild(stats);
+    return card;
+  }
+
+  function renderFertilizerEffectsHtml(fertilizer, className) {
+    const rows = [
+      ["Growth speed", multiplierValueText(fertilizer.speed)],
+      ["Harvest amount", multiplierValueText(fertilizer.gather)],
+      ["Seed yield", multiplierValueText(fertilizer.seeds)],
+      ["Seed level", `${signedNumberOrZero(fertilizer.seedLevel)} levels`],
+      ["Species chance", signedNumberOrZero(fertilizer.selectChance)],
+    ].map(([label, value]) => `
+      <span class="fertilizer-effect-row">
+        <small>${escapeHtml(label)}</small>
+        <strong>${escapeHtml(value)}</strong>
+      </span>
+    `).join("");
+    return className ? `<div class="${escapeHtml(className)} fertilizer-effect-list">${rows}</div>` : rows;
+  }
+
+  function renderCropYieldSection(label, rows, emptyText, fallbackMeta, options = {}) {
+    const section = document.createElement("div");
+    section.className = "crop-yield-section";
+    if (options.role) section.dataset.cropYieldRole = options.role;
+    const title = document.createElement("small");
+    title.textContent = label;
+    section.appendChild(title);
+
+    const list = document.createElement("div");
+    list.className = "crop-yield-list";
+    populateCropYieldList(list, rows, emptyText, fallbackMeta);
+    section.appendChild(list);
+    return section;
+  }
+
+  function updateCropYieldSection(card, role, rows, emptyText, fallbackMeta, multiplier) {
+    const section = card.querySelector(`[data-crop-yield-role="${role}"]`);
+    if (!section) return;
+    const list = section.querySelector(".crop-yield-list");
+    if (!list) return;
+    populateCropYieldList(list, adjustedCropRows(rows, multiplier), emptyText, fallbackMeta);
+  }
+
+  function populateCropYieldList(list, rows, emptyText, fallbackMeta) {
+    list.innerHTML = "";
+    if (!rows.length) {
+      const empty = document.createElement("p");
+      empty.className = "micro-copy";
+      empty.textContent = emptyText;
+      list.appendChild(empty);
+    } else {
+      for (const row of rows.slice(0, 12)) {
+        list.appendChild(renderCropYieldRow(row, fallbackMeta));
+      }
+    }
+  }
+
+  function adjustedCropRows(rows, multiplier) {
+    const value = Number(multiplier);
+    if (!Number.isFinite(value) || Math.abs(value - 1) < 0.0001) return rows || [];
+    return (rows || []).map((row) => ({
+      ...row,
+      amount: multiplyAmount(row.amount, value),
+      baseAmount: row.amount,
+    }));
+  }
+
+  function summarizeCropGrowthTime(crop, speed = 1) {
+    const multiplier = Number(speed);
+    const safeMultiplier = Number.isFinite(multiplier) && multiplier > 0 ? multiplier : 1;
+    const seconds = (crop.growth || [])
+      .map((row) => Number(row.seconds))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    if (!seconds.length) return "Unknown";
+    const labels = Array.from(new Set(seconds.map((value) => formatCropDuration(value / safeMultiplier)).filter(Boolean)));
+    return labels.join(" / ") || "Unknown";
+  }
+
+  function formatCropDuration(seconds) {
+    const value = Number(seconds);
+    if (!Number.isFinite(value) || value <= 0) return "";
+    const roundedSeconds = value >= 60
+      ? Math.max(60, Math.round(value / 60) * 60)
+      : Math.max(1, Math.round(value));
+    return formatTime(roundedSeconds * 1000);
+  }
+
+  function summarizeCropAmounts(rows, multiplier = 1) {
+    const values = adjustedCropRows(rows || [], multiplier)
+      .map((row) => row.amount ? `x${row.amount}` : "")
+      .filter(Boolean);
+    const unique = Array.from(new Set(values));
+    return unique.length ? unique.join(" / ") : "No return";
+  }
+
+  function renderCropYieldRow(item, fallbackMeta) {
+    const hasItem = item.itemId && items[item.itemId];
+    const row = document.createElement(hasItem ? "button" : "div");
+    row.className = "crop-yield-row";
+    if (hasItem) {
+      row.type = "button";
+      row.title = `Open ${itemName(item.itemId)}`;
+      row.addEventListener("click", () => navigate({ type: "item", id: item.itemId }));
+      row.appendChild(renderIcon(item.itemId));
+    } else {
+      row.appendChild(renderInlineImage(item.icon, item.name, initials(item.name)));
+    }
+
+    const body = document.createElement("span");
+    const meta = [
+      item.size ? plotSizeLabel(item.size) : "",
+      item.chance ? `${formatCompactNumber(item.chance)}% chance` : "",
+      item.baseAmount && item.baseAmount !== item.amount ? `normal x${item.baseAmount}` : "",
+    ].filter(Boolean).join(" · ");
+    body.innerHTML = `
+      <strong>${escapeHtml(item.name || item.itemId || "Item")}</strong>
+      <small>${escapeHtml(meta || fallbackMeta || "Farming item")}</small>
+    `;
+    row.appendChild(body);
+
+    const amount = document.createElement("em");
+    amount.className = "crop-yield-amount";
+    amount.textContent = item.amount ? `x${item.amount}` : "";
+    row.appendChild(amount);
+    return row;
+  }
+
+  function renderFarmingToolCard(tool) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "farming-card farming-tool-card";
+    card.addEventListener("click", () => navigate({ type: "item", id: tool.itemId }));
+    card.appendChild(renderIcon(tool.itemId));
+    const body = document.createElement("span");
+    body.innerHTML = `
+      <strong>${escapeHtml(tool.name)}</strong>
+      <small>${escapeHtml(tool.role || "Farming tool")}</small>
+      <em>${escapeHtml(tool.recipeUses ? `${tool.recipeUses} local recipe links` : "Useful farming item")}</em>
+    `;
+    card.appendChild(body);
+    return card;
+  }
+
+  function renderPetOverview(entry) {
+    const fragment = document.createDocumentFragment();
+    const pets = entry.pets || [];
+    const homeAnimals = entry.homeAnimals || [];
+    const buildings = entry.animalBuildings || [];
+
+    if (pets.length) {
+      const block = sectionBlock("Pet level planner", pets.length);
+      const wrap = document.createElement("div");
+      wrap.className = "planner-card pet-planner";
+      const maxLevel = Math.max(...pets.map((pet) => Number(pet.levels?.maxLevel || 1)));
+      wrap.innerHTML = `
+        <div class="pet-level-control">
+          <label>
+            <span>Pet level</span>
+            <input class="pet-level-number" type="number" min="1" max="${maxLevel}" value="1">
+          </label>
+          <input class="pet-level-range" type="range" min="1" max="${maxLevel}" value="1">
+          <p>Cards show each pet capped at its own max level.</p>
+        </div>
+      `;
+      const grid = document.createElement("div");
+      grid.className = "pet-grid";
+      let selectedPet = pets[0];
+      let selectedCard = null;
+      let requestedLevel = 1;
+      const renderSelectedPet = () => {
+        renderPetInspector(entry, selectedPet, requestedLevel);
+      };
+      const selectPet = (pet, card) => {
+        selectedPet = pet;
+        if (selectedCard) selectedCard.classList.remove("is-selected");
+        selectedCard = card;
+        selectedCard.classList.add("is-selected");
+        renderSelectedPet();
+      };
+      for (const pet of pets) {
+        const card = renderPetCard(pet, selectPet);
+        grid.appendChild(card);
+        if (pet === selectedPet) selectedCard = card;
+      }
+      wrap.appendChild(grid);
+      const numberInput = wrap.querySelector(".pet-level-number");
+      const rangeInput = wrap.querySelector(".pet-level-range");
+      const update = (value) => {
+        const level = clamp(Number(value) || 1, 1, maxLevel);
+        requestedLevel = level;
+        numberInput.value = level;
+        rangeInput.value = level;
+        updatePetLevelStats(wrap, level);
+        renderSelectedPet();
+      };
+      numberInput.addEventListener("input", () => update(numberInput.value));
+      rangeInput.addEventListener("input", () => update(rangeInput.value));
+      if (selectedCard) selectedCard.classList.add("is-selected");
+      update(1);
+      block.appendChild(wrap);
+      fragment.appendChild(block);
+    }
+
+    if (homeAnimals.length) {
+      const block = sectionBlock("Home animals", homeAnimals.length);
+      const grid = document.createElement("div");
+      grid.className = "pet-grid home-animal-grid";
+      for (const animal of homeAnimals) {
+        grid.appendChild(renderHomeAnimalCard(animal));
+      }
+      block.appendChild(grid);
+      fragment.appendChild(block);
+    }
+
+    if (buildings.length) {
+      const block = sectionBlock("Animal buildings", buildings.length);
+      const grid = document.createElement("div");
+      grid.className = "pet-grid animal-building-grid";
+      for (const building of buildings) {
+        grid.appendChild(renderAnimalBuildingCard(building));
+      }
+      block.appendChild(grid);
+      fragment.appendChild(block);
+    }
+
+    return fragment;
+  }
+
+  function renderPetCard(pet, onSelect) {
+    const card = document.createElement("div");
+    card.className = "pet-card";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `Show ${pet.name} details`);
+    card.dataset.petMaxLevel = pet.levels?.maxLevel || 1;
+    card.dataset.healthBase = pet.levels?.health?.base || 0;
+    card.dataset.healthMax = pet.levels?.health?.max || 0;
+    card.dataset.minDamageBase = pet.levels?.minDamage?.base || 0;
+    card.dataset.minDamageMax = pet.levels?.minDamage?.max || 0;
+    card.dataset.maxDamageBase = pet.levels?.maxDamage?.base || 0;
+    card.dataset.maxDamageMax = pet.levels?.maxDamage?.max || 0;
+    const choose = (event) => {
+      if (event?.target instanceof Element && event.target.closest("button, a, input, select, textarea")) return;
+      onSelect?.(pet, card, true);
+    };
+    card.addEventListener("click", choose);
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      onSelect?.(pet, card, true);
+    });
+
+    const head = document.createElement("div");
+    head.className = "pet-card-head";
+    const icon = pet.itemId && items[pet.itemId] ? renderIcon(pet.itemId) : renderInlineImage(pet.icon, pet.name, "PT");
+    head.appendChild(icon);
+    const title = document.createElement("span");
+    const meta = [
+      pet.tameLevel ? `tame ${pet.tameLevel}` : "",
+      pet.untamable ? "special obtain" : pet.obtain || "",
+    ].filter(Boolean).join(" · ");
+    title.innerHTML = `
+      <strong>${escapeHtml(pet.name)}</strong>
+      <small>${escapeHtml(meta || "Pet")}</small>
+    `;
+    head.appendChild(title);
+    card.appendChild(head);
+
+    const stats = document.createElement("div");
+    stats.className = "pet-stat-list";
+    stats.innerHTML = `
+      <span><small class="pet-level-caption">level 1</small><strong class="pet-health-value">0</strong><em>health</em></span>
+      <span><small>damage</small><strong class="pet-damage-value">0-0</strong><em>min-max</em></span>
+      <span><small>max level</small><strong>${escapeHtml(pet.levels?.maxLevel || "")}</strong><em>${escapeHtml(pet.levels?.perkCount ? `${pet.levels.perkCount} perks` : "base")}</em></span>
+    `;
+    card.appendChild(stats);
+
+    const feed = document.createElement("div");
+    feed.className = "pet-feed-row";
+    if (pet.feedItem && items[pet.feedItem]) {
+      feed.appendChild(renderDataItemChip({ itemId: pet.feedItem, name: pet.feedName }, "pet-feed-chip"));
+    } else {
+      const chip = document.createElement("span");
+      chip.className = "wiki-chip";
+      chip.textContent = pet.untamable ? "No tame feed" : "No feed listed";
+      feed.appendChild(chip);
+    }
+    card.appendChild(feed);
+    return card;
+  }
+
+  function renderHomeAnimalCard(animal) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "pet-card home-animal-card";
+    card.addEventListener("click", () => navigate({ type: "item", id: animal.itemId }));
+    card.appendChild(renderIcon(animal.itemId));
+    const body = document.createElement("span");
+    body.innerHTML = `
+      <strong>${escapeHtml(animal.name)}</strong>
+      <small>${escapeHtml(cleanupPublicText(animal.description || "Home animal"))}</small>
+    `;
+    card.appendChild(body);
+    return card;
+  }
+
+  function renderAnimalBuildingCard(building) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "pet-card animal-building-card";
+    card.addEventListener("click", () => {
+      if (building.recipeId && recipesById.has(building.recipeId)) {
+        navigate({ type: "recipe", id: building.recipeId });
+      } else {
+        navigate({ type: "item", id: building.itemId });
+      }
+    });
+    card.appendChild(renderIcon(building.itemId));
+    const body = document.createElement("span");
+    const meta = [building.skill, building.tool ? `Tool: ${itemName(building.tool)}` : ""].filter(Boolean).join(" · ");
+    body.innerHTML = `
+      <strong>${escapeHtml(building.name)}</strong>
+      <small>${escapeHtml(meta || "Animal husbandry")}</small>
+    `;
+    card.appendChild(body);
+    return card;
+  }
+
+  function renderItemChipRow(label, rows) {
+    const wrap = document.createElement("div");
+    wrap.className = "farming-chip-row";
+    const title = document.createElement("small");
+    title.textContent = label;
+    wrap.appendChild(title);
+    const chips = document.createElement("div");
+    chips.className = "wiki-list compact-chip-list";
+    for (const row of rows.slice(0, 8)) {
+      chips.appendChild(renderDataItemChip(row));
+    }
+    if (!rows.length) {
+      const empty = document.createElement("span");
+      empty.className = "wiki-chip";
+      empty.textContent = "No local row";
+      chips.appendChild(empty);
+    }
+    wrap.appendChild(chips);
+    return wrap;
+  }
+
+  function renderDataItemChip(item, className) {
+    const hasItem = item.itemId && items[item.itemId];
+    const chip = document.createElement(hasItem ? "button" : "span");
+    chip.className = `wiki-chip wiki-item-chip ${className || ""}`.trim();
+    if (hasItem) {
+      chip.type = "button";
+      chip.title = `Open ${itemName(item.itemId)}`;
+      chip.addEventListener("click", () => navigate({ type: "item", id: item.itemId }));
+      chip.appendChild(renderIcon(item.itemId));
+    } else {
+      chip.appendChild(renderInlineImage(item.icon, item.name, initials(item.name)));
+    }
+    const label = document.createElement("span");
+    const amount = item.amount ? ` x${item.amount}` : "";
+    label.textContent = `${item.name || item.itemId || "Item"}${amount}`;
+    chip.appendChild(label);
+    return chip;
+  }
+
+  function renderInlineDataIcon(src, alt) {
+    if (!src) return `<span class="item-icon"><span class="fallback-icon">${escapeHtml(initials(alt))}</span></span>`;
+    return `<span class="item-icon"><img alt="" loading="lazy" src="${escapeHtml(src)}"></span>`;
+  }
+
+  function plotSizeLabel(size) {
+    if (size === "single") return "Single plot";
+    if (size === "2x2") return "2x2 plot";
+    if (size === "6x2") return "6x2 field";
+    return size || "Local data";
+  }
+
+  function plotSizeShortLabel(size) {
+    if (size === "single") return "Single";
+    if (size === "2x2") return "2x2";
+    if (size === "6x2") return "6x2";
+    return size || "Local data";
+  }
+
+  function multiplierText(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || !number) return "no data";
+    if (Math.abs(number - 1) < 0.0001) return "no change";
+    const label = number > 1 ? "increase" : "decrease";
+    return `x${formatCompactNumber(number)} ${label}`;
+  }
+
+  function multiplierValueText(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || !number) return "no data";
+    return `x${formatCompactNumber(number)}`;
+  }
+
+  function signedNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number) || Math.abs(number) < 0.0001) return "";
+    return `${number > 0 ? "+" : ""}${formatCompactNumber(number)}`;
+  }
+
+  function signedNumberOrZero(value) {
+    return signedNumber(value) || "0";
+  }
+
+  function formatCompactNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "";
+    if (Math.abs(number - Math.round(number)) < 0.0001) return String(Math.round(number));
+    return String(Number(number.toFixed(2)));
+  }
+
+  function estimateFertilizedRows(rows, multiplier) {
+    const number = Number(multiplier);
+    if (!rows.length || !Number.isFinite(number)) return "";
+    return rows.slice(0, 4).map((row) => {
+      const amount = multiplyAmount(row.amount, number);
+      const size = row.size ? `${plotSizeLabel(row.size)}: ` : "";
+      return `${size}${row.name}${amount ? ` x${amount}` : ""}`;
+    }).join(", ");
+  }
+
+  function multiplyAmount(amount, multiplier) {
+    const text = String(amount || "");
+    const match = text.match(/^(\d+(?:\.\d+)?)(?:-(\d+(?:\.\d+)?))?$/);
+    if (!match) return text;
+    const min = Math.max(0, Number(match[1]) * multiplier);
+    const max = match[2] ? Math.max(0, Number(match[2]) * multiplier) : null;
+    const first = formatCompactNumber(min);
+    return max === null ? first : `${first}-${formatCompactNumber(max)}`;
+  }
+
+  function updatePetLevelStats(root, requestedLevel) {
+    for (const card of root.querySelectorAll(".pet-card[data-pet-max-level]")) {
+      const maxLevel = Number(card.dataset.petMaxLevel) || 1;
+      const level = clamp(requestedLevel, 1, maxLevel);
+      const health = statAtLevel(card.dataset.healthBase, card.dataset.healthMax, level, maxLevel);
+      const minDamage = statAtLevel(card.dataset.minDamageBase, card.dataset.minDamageMax, level, maxLevel);
+      const maxDamage = statAtLevel(card.dataset.maxDamageBase, card.dataset.maxDamageMax, level, maxLevel);
+      const caption = card.querySelector(".pet-level-caption");
+      const healthValue = card.querySelector(".pet-health-value");
+      const damageValue = card.querySelector(".pet-damage-value");
+      if (caption) caption.textContent = `level ${level}/${maxLevel}`;
+      if (healthValue) healthValue.textContent = formatPetStat(health);
+      if (damageValue) damageValue.textContent = `${formatPetStat(minDamage)}-${formatPetStat(maxDamage)}`;
+    }
+  }
+
+  function statAtLevel(baseValue, maxValue, level, maxLevel) {
+    const baseNumber = Number(baseValue) || 0;
+    const maxNumber = Number(maxValue) || baseNumber;
+    if (maxLevel <= 1) return baseNumber;
+    const ratio = (level - 1) / (maxLevel - 1);
+    return baseNumber + (maxNumber - baseNumber) * ratio;
+  }
+
+  function petTooltipHtml(pet, requestedLevel) {
+    const levels = pet.levels || {};
+    const maxLevel = Number(levels.maxLevel) || 1;
+    const level = clamp(Number(requestedLevel) || 1, 1, maxLevel);
+    const health = statAtLevel(levels.health?.base, levels.health?.max, level, maxLevel);
+    const minDamage = statAtLevel(levels.minDamage?.base, levels.minDamage?.max, level, maxLevel);
+    const maxDamage = statAtLevel(levels.maxDamage?.base, levels.maxDamage?.max, level, maxLevel);
+    const facts = [
+      ["Time to use", pet.useTime ? formatTime(Number(pet.useTime) * 1000) : ""],
+      ["Drop on death", pet.dontDropOnDeath ? "No" : pet.removeOnDeath ? "Removed" : "Yes"],
+      ["Slot", pet.slot || "Pet"],
+      ["Level", `${formatCompactNumber(level)} / ${formatCompactNumber(maxLevel)}`],
+      ["Obtain", pet.obtain || ""],
+      ["Taming level", pet.tameLevel || ""],
+      ["Feed", pet.feedName || ""],
+      ["Fear on catch", pet.fearOnCatch || ""],
+      ["Revive price", pet.revivePrice || ""],
+      ["Health", formatPetStat(health)],
+      ["Damage", `${formatPetStat(minDamage)}-${formatPetStat(maxDamage)}`],
+    ].filter(([, value]) => value !== "" && value !== null && value !== undefined);
+    const perks = (levels.perks || []).filter((perk) => (perk.details || []).length);
+
+    return `
+      <div class="pet-tooltip-card">
+        <div class="pet-tooltip-head">
+          ${renderInlineDataIcon(pet.icon, pet.name)}
+          <span>
+            <strong>${escapeHtml(pet.name)}</strong>
+            <small>${escapeHtml(pet.itemId || pet.id || "Pet")}</small>
+          </span>
+        </div>
+        ${facts.length ? `
+          <dl class="pet-tooltip-facts">
+            ${facts.map(([label, value]) => `
+              <div>
+                <dt>${escapeHtml(label)}</dt>
+                <dd>${escapeHtml(value)}</dd>
+              </div>
+            `).join("")}
+          </dl>
+        ` : ""}
+        ${perks.length ? `
+          <div class="pet-tooltip-section">
+            <h4>Abilities by levels</h4>
+            <ul class="pet-tooltip-perks">
+              ${perks.map((perk) => `
+                <li>
+                  <b>${escapeHtml(String(perk.level || "?"))}</b>
+                  <span>
+                    ${(perk.details || []).map((detail) => `<em>${escapeHtml(detail)}</em>`).join("")}
+                  </span>
+                </li>
+              `).join("")}
+            </ul>
+          </div>
+        ` : ""}
+        ${pet.description ? `<p class="pet-tooltip-description">${escapeHtml(cleanupPublicText(pet.description))}</p>` : ""}
+      </div>
+    `;
+  }
+
+  function statRangeText(stat) {
+    if (!stat) return "";
+    const base = Number(stat.base) || 0;
+    const max = Number(stat.max) || 0;
+    if (!base && !max) return "";
+    return base === max ? formatCompactNumber(base) : `${formatCompactNumber(base)}-${formatCompactNumber(max)}`;
+  }
+
+  function formatPetStat(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return "";
+    return formatCompactNumber(Math.round(number));
+  }
+
+  function damageRangeText(levels) {
+    const min = levels.minDamage || {};
+    const max = levels.maxDamage || {};
+    const baseMin = Number(min.base) || 0;
+    const baseMax = Number(max.base) || 0;
+    const capMin = Number(min.max) || 0;
+    const capMax = Number(max.max) || 0;
+    if (!baseMin && !baseMax && !capMin && !capMax) return "";
+    return `${formatCompactNumber(baseMin)}-${formatCompactNumber(baseMax)} to ${formatCompactNumber(capMin)}-${formatCompactNumber(capMax)}`;
+  }
+
+  function petTooltipText(pet) {
+    const levels = pet.levels || {};
+    const lines = [
+      pet.name,
+      pet.description || "",
+      pet.tameLevel ? `Taming level: ${pet.tameLevel}` : pet.untamable ? "Special obtain only" : "",
+      pet.feedName ? `Feed: ${pet.feedName}` : "",
+      levels.maxLevel ? `Max level: ${levels.maxLevel}` : "",
+      levels.health ? `Health: ${levels.health.base}-${levels.health.max}` : "",
+      levels.minDamage || levels.maxDamage ? `Damage: ${levels.minDamage?.base || 0}-${levels.maxDamage?.base || 0} to ${levels.minDamage?.max || 0}-${levels.maxDamage?.max || 0}` : "",
+      levels.perkCount ? `Perks: ${levels.perkCount}` : "",
+      levels.perkLevels?.length ? `Perk levels: ${levels.perkLevels.slice(0, 8).join(", ")}${levels.perkLevels.length > 8 ? ", ..." : ""}` : "",
+    ].filter(Boolean);
+    return lines.join("\n");
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
   function renderInlineImage(src, alt, fallbackText) {
     const icon = document.createElement("span");
     icon.className = "item-icon";
@@ -806,6 +2971,58 @@
       </table>
     `;
     block.appendChild(wrap);
+    return block;
+  }
+
+  function isShopItemsTable(table) {
+    const columns = new Set(table.columns || []);
+    return columns.has("itemId") || (columns.has("price") && columns.has("amount"));
+  }
+
+  function renderShopItemsTable(table) {
+    const rows = table.rows || [];
+    if (!rows.length) return document.createDocumentFragment();
+
+    const block = sectionBlock(table.title || "Shop items", rows.length);
+    const grid = document.createElement("div");
+    grid.className = "shop-item-grid";
+
+    for (const row of rows) {
+      const item = row.itemId ? items[row.itemId] : null;
+      const card = document.createElement(item ? "button" : "div");
+      card.className = "shop-item-card";
+      if (item) {
+        card.type = "button";
+        card.addEventListener("click", () => navigate({ type: "item", id: row.itemId }));
+      }
+
+      card.appendChild(item ? renderIcon(row.itemId) : renderInlineImage("", row.name, "IT"));
+
+      const body = document.createElement("span");
+      body.className = "shop-item-body";
+      const name = shopItemDisplayName(row, item);
+      const noteWasUsedInName = isSkillBookVariantName(row.name || item?.name || "", row.note);
+      const meta = [
+        row.amount ? `amount: ${row.amount}` : "",
+        row.note && !noteWasUsedInName ? `note: ${row.note}` : "",
+      ].filter(Boolean);
+      body.innerHTML = `
+        <strong dir="auto">${escapeHtml(name)}</strong>
+        ${meta.length ? `<small>${escapeHtml(meta.join(" · "))}</small>` : ""}
+      `;
+
+      if (row.price) {
+        const price = document.createElement("span");
+        price.className = "shop-item-price";
+        price.innerHTML = `<span>price:</span> ${formatPriceHtml(row.price, row.currencyItem)}`;
+        body.appendChild(price);
+      }
+
+      card.appendChild(body);
+      grid.appendChild(card);
+    }
+
+    block.appendChild(grid);
     return block;
   }
 
@@ -849,6 +3066,7 @@
   function renderWikiInspector(entry) {
     els.emptyInspector.classList.add("is-hidden");
     els.inspectorContent.classList.remove("is-hidden");
+    els.inspectorContent.classList.remove("pet-inspector-content");
     els.inspectorContent.innerHTML = "";
 
     const head = document.createElement("div");
@@ -878,45 +3096,60 @@
     els.inspectorContent.appendChild(noteBlock);
   }
 
+  function renderPetInspector(entry, pet, requestedLevel) {
+    if (!pet) {
+      renderWikiInspector(entry);
+      return;
+    }
+
+    els.emptyInspector.classList.add("is-hidden");
+    els.inspectorContent.classList.remove("is-hidden");
+    els.inspectorContent.classList.add("pet-inspector-content");
+    els.inspectorContent.innerHTML = "";
+
+    const detail = document.createElement("div");
+    detail.className = "pet-detail-card inspector-pet-detail";
+    detail.innerHTML = petTooltipHtml(pet, requestedLevel);
+    els.inspectorContent.appendChild(detail);
+  }
+
   function renderItemInspector(itemId) {
     const item = itemRecord(itemId);
     const produced = recipesByResult.get(itemId) || [];
     const used = usageByItem.get(itemId) || [];
-    const sources = sourcesByItem[itemId] || [];
+    const sources = mergedDropSources(itemId);
     const economy = itemEconomy[itemId] || null;
     const soldBy = shopsByItem[itemId] || [];
 
     els.emptyInspector.classList.add("is-hidden");
     els.inspectorContent.classList.remove("is-hidden");
+    els.inspectorContent.classList.remove("pet-inspector-content");
     els.inspectorContent.innerHTML = "";
 
     const head = document.createElement("div");
     head.className = "item-head";
     head.appendChild(renderIcon(itemId, "large"));
     const title = document.createElement("div");
+    const description = itemDescription(itemId);
     title.innerHTML = `
-      <h2 dir="auto">${escapeHtml(item.name)}</h2>
-      <p>${escapeHtml(item.id)}</p>
+      <h2 dir="auto">${escapeHtml(itemName(itemId))}</h2>
+      <p class="item-id">${escapeHtml(item.id)}</p>
+      ${description ? `<p class="item-description">${escapeHtml(description)}</p>` : ""}
+      ${itemStatSummaryHtml(itemId)}
     `;
     head.appendChild(title);
     els.inspectorContent.appendChild(head);
 
-    if (item.description) {
-      const block = sectionBlock("Description");
-      const note = document.createElement("div");
-      note.className = "empty-note";
-      note.textContent = item.description;
-      block.appendChild(note);
-      els.inspectorContent.appendChild(block);
-    }
-
     const panels = document.createElement("div");
     panels.className = "inspector-panels";
-    panels.appendChild(itemEconomyBlock("Item economy", economy));
+    panels.appendChild(itemEconomyBlock("Item economy", economy, itemId));
     panels.appendChild(shopSaleListBlock("Sold by shops", soldBy));
     panels.appendChild(recipeListBlock("Recipes that create this item", produced, { showIcons: true }));
+    panels.appendChild(stationListBlock("Crafting stations", craftingStationsForRecipes(produced)));
+    panels.appendChild(toolListBlock("Crafting tools", craftingToolsForRecipes(produced)));
+    panels.appendChild(requirementListBlock("Crafting requirements", craftingRequirementsForRecipes(produced)));
     panels.appendChild(recipeListBlock("Used in recipes", used, { showIcons: true }));
-    panels.appendChild(sourceListBlock("Known sources", sources));
+    panels.appendChild(sourceListBlock("Drops", sources));
     els.inspectorContent.appendChild(panels);
 
     if (!produced.length && !used.length && !sources.length && !soldBy.length && !hasEconomyInfo(economy)) {
@@ -929,8 +3162,13 @@
     }
   }
 
-  function itemEconomyBlock(title, economy) {
-    const block = sectionBlock(title, hasEconomyInfo(economy) ? 1 : 0);
+  function itemEconomyBlock(title, economy, itemId) {
+    const block = sectionBlock(title, itemId && isItemSellable(itemId) ? 1 : 0);
+    if (itemId && isItemSellable(itemId)) {
+      block.appendChild(renderItemBuyUpCalculator(itemId));
+      return block;
+    }
+
     if (!hasEconomyInfo(economy)) {
       const empty = document.createElement("div");
       empty.className = "empty-note";
@@ -939,24 +3177,69 @@
       return block;
     }
 
-    const stats = {};
-    stats["Can sell to trader"] = hasPrice(economy.buyUpPrice) && !economy.tradeRestricted
-      ? "Likely yes"
-      : "No clear buy-up price";
-    if (hasPrice(economy.buyUpPrice)) stats["Trader buy-up"] = formatEconomyPrice(economy.buyUpPrice);
-    if (hasPrice(economy.sellPrice)) stats["Base shop price"] = formatEconomyPrice(economy.sellPrice);
-    if (hasPrice(economy.repairPrice)) stats["Repair price"] = formatEconomyPrice(economy.repairPrice);
-    stats["Trade flag"] = economy.tradeRestricted ? "Restricted" : "Allowed";
-    const grid = document.createElement("div");
-    grid.className = "wiki-grid";
-    for (const [label, value] of Object.entries(stats)) {
-      const cell = document.createElement("div");
-      cell.className = "wiki-stat";
-      cell.innerHTML = `<span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>`;
-      grid.appendChild(cell);
-    }
-    block.appendChild(grid);
+    const empty = document.createElement("div");
+    empty.className = "empty-note";
+    empty.textContent = economy.tradeRestricted
+      ? "This item is trade restricted."
+      : "No buy-up calculator is available for this item.";
+    block.appendChild(empty);
     return block;
+  }
+
+  function renderItemBuyUpCalculator(itemId) {
+    const calc = document.createElement("div");
+    calc.className = "buyup-calculator";
+    const best = bestBuyUpBuyerForItem(itemId);
+    const quote = buyUpQuote(itemId, 1, "best");
+
+    const buyerSummary = document.createElement("div");
+    buyerSummary.className = "best-buyer-card";
+    buyerSummary.innerHTML = `
+      <span>Best buyer</span>
+      <strong>${escapeHtml(best?.name || "Unknown buyer")}</strong>
+      <small>${escapeHtml(formatPercent(quote.percent))}${quote.special ? " · special price" : " · usual price"} · base ${formatCurrencyHtml(quote.base)}</small>
+    `;
+
+    const controls = document.createElement("div");
+    controls.className = "buyup-controls";
+    const quantityField = document.createElement("label");
+    quantityField.className = "calculator-field";
+    quantityField.innerHTML = `<span>Quantity</span>`;
+    const quantity = document.createElement("input");
+    quantity.type = "number";
+    quantity.min = "0";
+    quantity.step = "1";
+    quantity.value = "1";
+    quantityField.appendChild(quantity);
+    controls.append(quantityField);
+
+    const result = document.createElement("div");
+    result.className = "buyup-result";
+    const detail = document.createElement("div");
+    detail.className = "buyup-detail";
+
+    const add = document.createElement("button");
+    add.type = "button";
+    add.className = "small-button buyup-add";
+    add.textContent = "Add to Sell";
+    add.addEventListener("click", () => {
+      addSellItem(itemId, quantity.value);
+      navigate({ type: "sell" });
+    });
+
+    function update() {
+      const quote = buyUpQuote(itemId, quantity.value, "best");
+      result.innerHTML = `
+        <span>Estimated payout</span>
+        <strong>${formatCurrencyHtml(quote.payout)}</strong>
+      `;
+      detail.textContent = `${quote.buyer?.name || "Best buyer"}: ${formatPriceNumber(quote.base)} × ${formatPercent(quote.percent)} × ${quote.quantity} = ${formatPriceNumber(quote.raw)} Coins, rounded down`;
+    }
+
+    quantity.addEventListener("input", update);
+    update();
+    calc.append(buyerSummary, controls, result, detail, add);
+    return calc;
   }
 
   function shopSaleListBlock(title, list) {
@@ -972,18 +3255,31 @@
         row.type = "button";
         row.addEventListener("click", () => navigate({ type: "wiki", id: sale.shopId }));
       }
-      const details = [
-        sale.amount ? `amount: ${sale.amount}` : "",
-        sale.price ? `price: ${sale.price}` : "",
-        sale.note ? `note: ${sale.note}` : "",
-      ].filter(Boolean);
       row.innerHTML = `
         <div class="source-top">
           <span dir="auto">${escapeHtml(sale.shop || "NPC shop")}</span>
           <span>Shop</span>
         </div>
-        ${details.map((line) => `<div class="source-meta">${escapeHtml(line)}</div>`).join("")}
       `;
+      if (sale.amount) {
+        const amount = document.createElement("div");
+        amount.className = "source-meta";
+        amount.textContent = `amount: ${sale.amount}`;
+        row.appendChild(amount);
+      }
+      if (sale.price) {
+        const price = document.createElement("div");
+        price.className = "source-meta source-price";
+        price.innerHTML = `<span>price:</span> ${formatPriceHtml(sale.price, sale.currencyItem)}`;
+        row.appendChild(price);
+      }
+      if (sale.note) {
+        const note = document.createElement("div");
+        note.className = "source-meta";
+        const variantName = skillBookVariantName(sale.name || (sale.itemId ? itemName(sale.itemId) : ""), sale.note);
+        note.textContent = variantName ? `item: ${variantName}` : `note: ${sale.note}`;
+        row.appendChild(note);
+      }
       wrap.appendChild(row);
     }
 
@@ -1008,17 +3304,234 @@
   }
 
   function hasPrice(value) {
-    const number = Number(value);
+    const number = parsePriceValue(value);
     return Number.isFinite(number) && number > 0;
   }
 
-  function formatEconomyPrice(value) {
+  function accessibleBuyUpBuyerNames(entries) {
+    const names = new Set();
+    for (const entry of entries || []) {
+      if (entry.type === "shop") {
+        const normalized = normalize(entry.name);
+        if (normalized) names.add(normalized);
+      }
+      if (entry.type !== "area") continue;
+      for (const npc of entry.npcs || []) {
+        const normalized = normalize(npc.name);
+        if (normalized) names.add(normalized);
+      }
+    }
+    return names;
+  }
+
+  function isItemSellable(itemId) {
+    const economy = itemEconomy[itemId];
+    return Boolean(economy && hasPrice(economy.buyUpPrice) && !economy.tradeRestricted);
+  }
+
+  function buyUpQuote(itemId, quantityValue, buyerId) {
+    const economy = itemEconomy[itemId] || {};
+    const base = parsePriceValue(economy.buyUpPrice);
+    const quantity = normalizeSellQuantity(quantityValue);
+    const resolved = resolveBuyUpBuyerForItem(itemId, buyerId);
+    const percent = resolved.percent;
+    const raw = Number.isFinite(base) ? base * percent * quantity : 0;
+    return {
+      itemId,
+      base: Number.isFinite(base) ? base : 0,
+      quantity,
+      buyer: resolved.buyer,
+      percent,
+      special: resolved.special,
+      raw,
+      payout: Math.floor(raw + 0.000001),
+    };
+  }
+
+  function resolveBuyUpBuyerForItem(itemId, buyerId) {
+    const buyer = buyerId === "best"
+      ? bestBuyUpBuyerForItem(itemId)
+      : buyUpBuyersById.get(buyerId) || bestBuyUpBuyerForItem(itemId);
+    const special = buyer ? isSpecialBuyUpItem(itemId, buyer) : false;
+    const percentValue = parsePriceValue(special ? buyer?.specialPercent : buyer?.usualPercent);
+    return {
+      buyer,
+      special,
+      percent: Number.isFinite(percentValue) && percentValue > 0 ? percentValue : 1,
+    };
+  }
+
+  function bestBuyUpBuyerForItem(itemId) {
+    let best = null;
+    let bestPercent = -Infinity;
+    for (const buyer of buyUpBuyers) {
+      const special = isSpecialBuyUpItem(itemId, buyer);
+      const percent = parsePriceValue(special ? buyer.specialPercent : buyer.usualPercent);
+      if (Number.isFinite(percent) && percent > bestPercent) {
+        best = buyer;
+        bestPercent = percent;
+      }
+    }
+    return best;
+  }
+
+  function isSpecialBuyUpItem(itemId, buyer) {
+    if (!buyer) return false;
+    if (buyUpBuyerSpecialItems.get(buyer.id)?.has(itemId)) return true;
+    const skill = buyer.craftSpecialSkills;
+    if (!skill) return false;
+    return (craftSkillsByItem.get(itemId) || []).some((itemSkill) => normalize(itemSkill) === normalize(skill));
+  }
+
+  function addSellItem(itemId, quantityValue = 1) {
+    if (!isItemSellable(itemId)) return;
+    const quantity = normalizeSellQuantity(quantityValue) || 1;
+    const existing = state.sellItems.find((row) => row.itemId === itemId);
+    if (existing) {
+      existing.quantity += quantity;
+    } else {
+      state.sellItems.push({ itemId, quantity });
+    }
+  }
+
+  function updateSellItemQuantity(itemId, quantityValue) {
+    const quantity = normalizeSellQuantity(quantityValue);
+    const existing = state.sellItems.find((row) => row.itemId === itemId);
+    if (existing) existing.quantity = quantity;
+    state.sellItems = state.sellItems.filter((row) => row.quantity > 0);
+  }
+
+  function removeSellItem(itemId) {
+    state.sellItems = state.sellItems.filter((row) => row.itemId !== itemId);
+  }
+
+  function normalizeSellQuantity(value) {
+    const quantity = Math.floor(Number(value));
+    return Number.isFinite(quantity) && quantity > 0 ? quantity : 0;
+  }
+
+  function formatPercent(value) {
+    const percent = Number(value) * 100;
+    if (!Number.isFinite(percent)) return "100%";
+    return `${formatPriceNumber(percent)}%`;
+  }
+
+  function formatPriceHtml(value, currencyItemId = "") {
+    const specialCurrency = resolveSpecialCurrency(value, currencyItemId);
+    if (specialCurrency) return formatSpecialCurrencyHtml(value, specialCurrency);
+    return formatCurrencyHtml(value);
+  }
+
+  function formatSpecialCurrencyHtml(value, currency) {
+    const amount = formatPriceNumber(parsePriceValue(value));
+    if (!amount) return "";
+    const label = `${amount} ${currency.name}`;
+    const iconHtml = currency.icon
+      ? `<span class="currency-item-icon"><img src="${escapeHtml(currency.icon)}" alt="" aria-hidden="true"></span>`
+      : `<span class="currency-coin currency-special" data-symbol="${escapeHtml(currency.symbol)}" aria-hidden="true"></span>`;
+    return `
+      <span class="currency-price special-currency-price" title="${escapeHtml(label)}" aria-label="${escapeHtml(label)}">
+        <span class="currency-part currency-special-part" title="${escapeHtml(currency.name)}">
+          <span class="currency-value">${escapeHtml(amount)}</span>
+          ${iconHtml}
+          <span class="currency-item-name">${escapeHtml(currency.name)}</span>
+        </span>
+      </span>
+    `;
+  }
+
+  function resolveSpecialCurrency(value, currencyItemId = "") {
+    const explicit = currencyItemId && items[currencyItemId]
+      ? items[currencyItemId]
+      : null;
+    if (explicit) {
+      return {
+        id: explicit.id,
+        name: explicit.name || humanizeLabel(explicit.id),
+        icon: explicit.icon || "",
+        symbol: initials(explicit.name || explicit.id),
+      };
+    }
+
+    const text = String(value || "").toLowerCase();
+    const knownCurrencyIds = ["GuildCoin"];
+    for (const id of knownCurrencyIds) {
+      const item = items[id];
+      const itemName = String(item?.name || id).toLowerCase();
+      if (item && (text.includes(itemName) || text.includes(id.toLowerCase()))) {
+        return {
+          id: item.id,
+          name: item.name || humanizeLabel(item.id),
+          icon: item.icon || "",
+          symbol: initials(item.name || item.id),
+        };
+      }
+    }
+
+    return null;
+  }
+
+  function formatCurrencyHtml(value) {
+    const parts = splitCurrency(value);
+    if (!parts) return "";
+    const label = parts
+      .map((part) => `${part.value} ${part.label}`)
+      .join(", ");
+    return `
+      <span class="currency-price" title="${escapeHtml(`${formatPriceNumber(parts.raw)} Coins = ${label}`)}" aria-label="${escapeHtml(label)}">
+        ${parts.map((part) => `
+          <span class="currency-part" title="${escapeHtml(part.label)}">
+            <span class="currency-value">${escapeHtml(part.value)}</span>
+            <span class="currency-coin currency-${escapeHtml(part.type)}" data-symbol="${escapeHtml(part.symbol)}" aria-hidden="true"></span>
+          </span>
+        `).join("")}
+      </span>
+    `;
+  }
+
+  function splitCurrency(value) {
+    const number = parsePriceValue(value);
+    if (!Number.isFinite(number) || number < 0) return null;
+    const gold = Math.floor(number / 10000);
+    const silver = Math.floor((number - (gold * 10000)) / 100);
+    const copperValue = number - (gold * 10000) - (silver * 100);
+    const copper = formatPriceNumber(copperValue);
+    const parts = [];
+
+    if (gold > 0) parts.push(currencyPart("gold", gold));
+    if (silver > 0 || gold > 0) parts.push(currencyPart("silver", silver));
+    if (copperValue > 0 || parts.length === 0 || silver > 0 || gold > 0) {
+      parts.push(currencyPart("copper", copper));
+    }
+
+    return Object.assign(parts, { raw: number });
+  }
+
+  function currencyPart(type, value) {
+    const labels = {
+      gold: ["Gold", "G"],
+      silver: ["Silver", "S"],
+      copper: ["Copper", "C"],
+    };
+    return {
+      type,
+      value: String(value),
+      label: labels[type][0],
+      symbol: labels[type][1],
+    };
+  }
+
+  function parsePriceValue(value) {
+    if (typeof value === "number") return value;
+    const match = String(value ?? "").replace(/,/g, "").match(/\d+(?:\.\d+)?/);
+    return match ? Number(match[0]) : NaN;
+  }
+
+  function formatPriceNumber(value) {
     const number = Number(value);
     if (!Number.isFinite(number)) return "";
-    const rounded = Math.abs(number - Math.round(number)) < 0.01
-      ? String(Math.round(number))
-      : number.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-    return `${rounded} coins`;
+    if (Math.abs(number - Math.round(number)) < 0.01) return String(Math.round(number));
+    return number.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
   }
 
   function recipeListBlock(title, list, options = {}) {
@@ -1063,6 +3576,66 @@
     return block;
   }
 
+  function stationListBlock(title, stationIds) {
+    const block = sectionBlock(title, stationIds.length);
+    const wrap = document.createElement("div");
+    wrap.className = "station-list";
+
+    for (const stationId of stationIds) {
+      wrap.appendChild(renderStationButton(stationId));
+    }
+
+    if (!stationIds.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note";
+      empty.textContent = "No station requirement found in the local recipes.";
+      wrap.appendChild(empty);
+    }
+
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function toolListBlock(title, toolIds) {
+    const block = sectionBlock(title, toolIds.length);
+    const wrap = document.createElement("div");
+    wrap.className = "tool-list";
+
+    for (const toolId of toolIds) {
+      wrap.appendChild(renderToolButton(toolId));
+    }
+
+    if (!toolIds.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note";
+      empty.textContent = "No tool requirement found in the local recipes.";
+      wrap.appendChild(empty);
+    }
+
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function requirementListBlock(title, requirementIds) {
+    const block = sectionBlock(title, requirementIds.length);
+    const wrap = document.createElement("div");
+    wrap.className = "requirement-list";
+
+    for (const requirementId of requirementIds) {
+      wrap.appendChild(renderRequirementButton(requirementId));
+    }
+
+    if (!requirementIds.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note";
+      empty.textContent = "No extra station or building requirement found in the local recipes.";
+      wrap.appendChild(empty);
+    }
+
+    block.appendChild(wrap);
+    return block;
+  }
+
   function sourceListBlock(title, list) {
     const block = sectionBlock(title, list.length);
     const wrap = document.createElement("div");
@@ -1071,8 +3644,16 @@
     const limited = sorted.slice(0, 80);
 
     for (const source of limited) {
-      const row = document.createElement("div");
+      const row = document.createElement(source.mapId && wikiEntriesById.has(source.mapId) ? "button" : "div");
       row.className = "source-row";
+      if (row.tagName === "BUTTON") {
+        row.type = "button";
+        row.title = `Open ${source.mapName || sourceTitle(source)}`;
+        row.addEventListener("click", () => {
+          activateWikiKind("area", { clearQuery: true });
+          navigate({ type: "wiki", id: source.mapId });
+        });
+      }
       const metaLines = sourceMetaLines(source);
       row.innerHTML = `
         <div class="source-top">
@@ -1100,12 +3681,140 @@
     return block;
   }
 
+  function mergedDropSources(itemId) {
+    return [
+      ...(sourcesByItem[itemId] || []),
+      ...fishingMapSources(itemId),
+    ];
+  }
+
+  function fishingMapSources(itemId) {
+    const rows = [];
+    const seen = new Set();
+    const item = itemRecord(itemId);
+    const itemNameKey = normalize(item.name);
+
+    for (const entry of wikiEntries) {
+      if (entry.type !== "fish") continue;
+      const catchList = (entry.lists || []).find((list) => list.title === "Catch result");
+      const matchesFishItem = entry.itemId === itemId ||
+        (catchList?.items || []).some((value) => normalize(value) === itemNameKey || normalize(value) === normalize(itemId));
+      if (!matchesFishItem) continue;
+
+      const foundList = (entry.lists || []).find((list) => list.title === "Found in");
+      for (const location of foundList?.items || []) {
+        const mapEntry = mapEntryForLabel(location);
+        const signature = `${entry.id}:${location}`;
+        if (seen.has(signature)) continue;
+        seen.add(signature);
+        rows.push({
+          kind: "Fishing",
+          sourceDisplay: location,
+          source: location,
+          mapId: mapEntry?.id || "",
+          mapName: mapEntry?.name || mapNameFromLocation(location),
+          fishId: entry.id,
+          amount: 1,
+          chance: "catch",
+        });
+      }
+    }
+
+    return rows;
+  }
+
+  function buildFishButcheringYields() {
+    const fishLookup = new Map();
+    for (const entry of wikiEntries) {
+      if (entry.type !== "fish") continue;
+      const fishItemId = entry.itemId || String(entry.id || "").replace(/^fish:/, "");
+      for (const key of [fishItemId, entry.id, String(entry.id || "").replace(/^fish:/, ""), entry.name]) {
+        const normalized = normalize(key);
+        if (normalized) fishLookup.set(normalized, fishItemId);
+      }
+    }
+
+    const yieldsByFish = new Map();
+    const seenByFish = new Map();
+    for (const [outputItemId, sourceRows] of Object.entries(sourcesByItem)) {
+      const item = items[outputItemId];
+      if (!item || !Array.isArray(sourceRows)) continue;
+
+      for (const source of sourceRows) {
+        if (!isButcheringSource(source)) continue;
+        const fishItemId = fishLookup.get(normalize(source.source)) || fishLookup.get(normalize(source.sourceDisplay));
+        if (!fishItemId) continue;
+
+        const signature = [
+          outputItemId,
+          source.amount || "",
+          source.chance || "",
+          source.level || "",
+        ].join("|");
+        if (!seenByFish.has(fishItemId)) seenByFish.set(fishItemId, new Set());
+        if (seenByFish.get(fishItemId).has(signature)) continue;
+        seenByFish.get(fishItemId).add(signature);
+
+        addToMapList(yieldsByFish, fishItemId, {
+          itemId: outputItemId,
+          name: item.name || outputItemId,
+          icon: item.icon || "",
+          kind: source.kind || source.skillDisplay || "Butchering",
+          amount: source.amount || "",
+          chance: source.chance || "",
+          level: source.level || "",
+        });
+      }
+    }
+
+    for (const [fishItemId, rows] of yieldsByFish.entries()) {
+      rows.sort((a, b) => {
+        const chanceDiff = percentValue(b.chance) - percentValue(a.chance);
+        if (chanceDiff) return chanceDiff;
+        return a.name.localeCompare(b.name);
+      });
+      yieldsByFish.set(fishItemId, rows);
+    }
+    return yieldsByFish;
+  }
+
+  function isButcheringSource(source) {
+    return [source.kind, source.skill, source.skillDisplay]
+      .some((value) => normalize(value) === "butchering");
+  }
+
+  function percentValue(value) {
+    const match = String(value || "").match(/([\d.]+)\s*%/);
+    return match ? Number(match[1]) : 0;
+  }
+
+  function buildItemLookup() {
+    const lookup = new Map();
+    for (const item of Object.values(items)) {
+      for (const key of [item.id, item.name, String(item.id || "").replace(/([a-z])([A-Z])/g, "$1 $2")]) {
+        const normalized = normalize(key);
+        if (normalized && !lookup.has(normalized)) lookup.set(normalized, item.id);
+        const compact = normalized.replace(/\s+/g, "");
+        if (compact && !lookup.has(compact)) lookup.set(compact, item.id);
+      }
+    }
+    return lookup;
+  }
+
   function sourceTitle(source) {
     return source.sourceDisplay || source.worldTypesDisplay || source.source || "Unknown source";
   }
 
   function sourceMetaLines(source) {
     const lines = [];
+    if (normalize(source.kind) === "fishing") {
+      const area = fishingAreaFromLocation(source.sourceDisplay || source.source || "");
+      if (source.mapName) lines.push(`map: ${source.mapName}`);
+      if (area) lines.push(`area: ${area}`);
+      lines.push("source: Fishing");
+      return lines;
+    }
+
     const action = source.skillDisplay || source.skill;
     if (action || source.level) {
       lines.push(`action: ${action || source.kind}${source.level ? ` · level ${source.level}` : ""}`);
@@ -1119,6 +3828,11 @@
     }
     lines.push(`amount: ${source.amount || "?"} · chance: ${source.chance || "unknown"}`);
     return lines;
+  }
+
+  function fishingAreaFromLocation(label) {
+    const parts = String(label || "").split("·");
+    return parts.length > 1 ? parts.slice(1).join("·").trim() : "";
   }
 
   function sortSources(a, b) {
@@ -1138,6 +3852,7 @@
 
   function sourcePriority(source) {
     const kind = normalize(source.kind);
+    if (kind === "fishing") return 0;
     if (kind === "skinning") return 0;
     if (kind === "butchering") return 1;
     if (kind === "mining" || kind === "lumberjacking" || kind === "gathering") return 2;
@@ -1162,7 +3877,7 @@
     const button = document.createElement("button");
     button.type = "button";
     button.className = `item-tile ${role || ""}`;
-    button.title = `${itemName(itemId)} (${itemId})`;
+    attachItemTooltip(button, itemId);
     button.appendChild(renderIcon(itemId));
     if (amount) {
       const badge = document.createElement("span");
@@ -1181,18 +3896,21 @@
 
   function renderIcon(itemId, size) {
     const item = itemRecord(itemId);
+    const wikiEntry = wikiEntryByItemId.get(itemId);
     const icon = document.createElement("span");
     icon.className = "item-icon";
+    attachItemTooltip(icon, itemId);
     if (size === "large") {
       icon.style.width = "64px";
       icon.style.height = "64px";
     }
 
-    if (item.icon) {
+    const iconSrc = item.icon || wikiEntry?.image || "";
+    if (iconSrc) {
       const img = document.createElement("img");
       img.alt = "";
       img.loading = "lazy";
-      img.src = item.icon;
+      img.src = iconSrc;
       icon.appendChild(img);
     } else {
       const fallback = document.createElement("span");
@@ -1203,7 +3921,43 @@
     return icon;
   }
 
+  function renderToolIcon(toolId) {
+    return renderIcon(toolIconItemId(toolId));
+  }
+
+  function toolIconItemId(toolId) {
+    if (itemRecord(toolId).icon) return toolId;
+    if (toolIconCache.has(toolId)) return toolIconCache.get(toolId);
+
+    const query = normalize(toolId);
+    const preferredRanks = ["stone", "wooden", "copper", "bronze", "iron", "steel"];
+    const matches = Object.values(items)
+      .filter((item) => item.icon)
+      .filter((item) => normalize(item.id).includes(query) || normalize(item.name).includes(query))
+      .sort((a, b) => toolIconRank(a, query, preferredRanks) - toolIconRank(b, query, preferredRanks));
+    const iconId = matches[0]?.id || toolId;
+    toolIconCache.set(toolId, iconId);
+    return iconId;
+  }
+
+  function toolIconRank(item, query, preferredRanks) {
+    const id = normalize(item.id);
+    const name = normalize(item.name);
+    let rank = 50;
+    if (id === query || name === query) rank -= 40;
+    if (id.endsWith(query) || name.endsWith(query)) rank -= 15;
+    const preferred = preferredRanks.findIndex((word) => id.includes(word) || name.includes(word));
+    if (preferred >= 0) rank += preferred;
+    if (id.includes("wonder") || name.includes("wonder")) rank += 20;
+    if (id.includes("loot") || name.includes("mysterious")) rank += 10;
+    return rank;
+  }
+
   function renderWikiIcon(entry, size) {
+    if (entry?.type === "creature") {
+      return renderCreatureWikiIcon(entry, size);
+    }
+
     if (entry?.image) {
       const icon = renderInlineImage(entry.image, entry.name, wikiInitials(entry));
       if (size === "large") {
@@ -1230,6 +3984,59 @@
     return icon;
   }
 
+  function renderCreatureWikiIcon(entry, size) {
+    const icon = document.createElement("span");
+    icon.className = "item-icon";
+    if (size === "large") {
+      icon.style.width = "64px";
+      icon.style.height = "64px";
+    }
+
+    const src = creatureDisplayImage(entry);
+    if (src) {
+      const img = document.createElement("img");
+      img.alt = entry.name || "";
+      img.loading = "lazy";
+      img.src = src;
+      img.addEventListener("error", () => {
+        icon.innerHTML = "";
+        const fallback = document.createElement("span");
+        fallback.className = "fallback-icon";
+        fallback.textContent = wikiInitials(entry);
+        icon.appendChild(fallback);
+      }, { once: true });
+      icon.appendChild(img);
+      return icon;
+    }
+
+    const fallback = document.createElement("span");
+    fallback.className = "fallback-icon";
+    fallback.textContent = wikiInitials(entry);
+    icon.appendChild(fallback);
+    return icon;
+  }
+
+  function creatureDisplayImage(entry) {
+    if (!entry) return "";
+    const image = entry.image || "";
+    if (image && entry.imageSource === "pet-icon-match") return image;
+    if (image && !isLikelyCreatureIconPlaceholder(entry, image)) return image;
+    return `assets/creatures/${creatureAssetName(entry)}.png?v=20260708-1235`;
+  }
+
+  function isLikelyCreatureIconPlaceholder(entry, image) {
+    if (!image) return false;
+    if (!String(image).includes("/icons/")) return false;
+    const firstAbilityIcon = entry.abilities?.[0]?.icon || "";
+    return image === firstAbilityIcon || !String(image).includes("/creatures/");
+  }
+
+  function creatureAssetName(entry) {
+    return String(entry.localId || entry.id || entry.name || "")
+      .replace(/^creature:/, "")
+      .replace(/[^A-Za-z0-9_-]/g, "");
+  }
+
   function wikiInitials(entry) {
     const typeMap = {
       creature: "MO",
@@ -1238,6 +4045,8 @@
       shop: "SH",
       quest: "QT",
       skill: "SK",
+      farming: "FM",
+      pet: "PT",
     };
     return typeMap[entry?.type] || initials(entry?.name || "Wiki");
   }
@@ -1389,16 +4198,153 @@
 
   function itemMatches(item, query) {
     return normalize(item.id).includes(query) ||
+      normalize(itemName(item.id)).includes(query) ||
       normalize(item.name).includes(query) ||
-      normalize(item.description || "").includes(query);
+      normalize(item.description || "").includes(query) ||
+      normalize(itemStatSearchText(item.id)).includes(query);
   }
 
   function recipeFilterTypes() {
-    return new Set(["craft", "build", "process"]);
+    return new Set(["craft", "build", "process", "cooking", "potion"]);
+  }
+
+  function recipeMatchesFilter(recipe, filter) {
+    if (filter === "all" || filter === "items") return true;
+    if (filter === "cooking") {
+      return state.cookingTab === "fermented"
+        ? isFermentationTabRecipe(recipe)
+        : isCookingRecipe(recipe) && !isFermentationTabRecipe(recipe);
+    }
+    if (filter === "potion") return isPotionRecipe(recipe);
+    return recipe.kind === filter;
+  }
+
+  function cookingRecipes() {
+    return recipes.filter(isCookingRecipe);
+  }
+
+  function potionRecipes() {
+    return recipes.filter(isPotionRecipe);
+  }
+
+  function isCookingRecipe(recipe) {
+    if (!recipe) return false;
+    if (recipe.skill === "Cookery" || displaySkill(recipe.skill) === "Cookery") return true;
+    return isCookingProcessRecipe(recipe) || isFermentedDrinkRecipe(recipe);
+  }
+
+  function isCookingProcessRecipe(recipe) {
+    if (!recipe || recipe.kind !== "process") return false;
+    const stationSet = new Set(uniqueStationIds(recipe));
+    if ([
+      "WitchcraftPot",
+      "DwarvenMachineLiquor",
+      "GrimWoodTanningVat",
+      "TanningVatBasic",
+      "TanningVatLarge",
+    ].some((station) => stationSet.has(station))) {
+      return false;
+    }
+    if (["Campfire", "CampfireWithPot", "BrickOven", "StoneOven", "DwarvenMachineCookery", "ShipBoilingPot"].some((station) => stationSet.has(station))) {
+      return true;
+    }
+    const text = recipeCookingText(recipe);
+    return /\b(bake|baked|boil|boiled|cauldron|cookery|roast|roasted|fried|soup|stew|porridge|bannock|bread|dessert|tartare|ribs|fillet|mushroom|wort|juice)\b/i.test(text);
+  }
+
+  function isFermentedDrinkRecipe(recipe) {
+    if (!recipe) return false;
+    const stationSet = new Set(uniqueStationIds(recipe));
+    return stationSet.has("FermentationBarrel") || /Fermentation/i.test(recipe.processName || "");
+  }
+
+  function isFermentationJuiceRecipe(recipe) {
+    if (!recipe) return false;
+    if (recipe.skill !== "Cookery" && displaySkill(recipe.skill) !== "Cookery") return false;
+    const text = `${recipe.result} ${itemName(recipe.result)} ${recipe.folder || ""}`;
+    return /\bjuice\b/i.test(text) && !/\bsolution\b/i.test(text);
+  }
+
+  function usesFermentationJuice(recipe) {
+    if (!recipe) return false;
+    if (recipe.skill !== "Cookery" && displaySkill(recipe.skill) !== "Cookery") return false;
+    return (recipe.materials || []).some((material) => {
+      const text = `${material.item} ${itemName(material.item)}`;
+      return /\bjuice\b/i.test(text) && !/\bsolution\b/i.test(text);
+    });
+  }
+
+  function isFermentationTabRecipe(recipe) {
+    return isFermentedDrinkRecipe(recipe) || isFermentationJuiceRecipe(recipe) || usesFermentationJuice(recipe);
+  }
+
+  function recipeCookingText(recipe) {
+    return [
+      recipe.processName,
+      recipe.folder,
+      recipe.result,
+      itemName(recipe.result),
+      itemDescription(recipe.result),
+      ...(recipe.materials || []).map((material) => `${material.item} ${itemName(material.item)}`),
+    ].join(" ");
+  }
+
+  function cookingRecipeKindLabel(recipe) {
+    if (isFermentedDrinkRecipe(recipe)) return "Fermented drink";
+    if (isFermentationJuiceRecipe(recipe)) return "Juice";
+    if (usesFermentationJuice(recipe)) return "Drink";
+    if (recipe.kind === "process") return "Cooking process";
+    if (recipe.kind === "build") return "Cooking build";
+    return "Cooking";
+  }
+
+  function sortCookingRecipes(a, b) {
+    const fermentedDelta = Number(isFermentationTabRecipe(b)) - Number(isFermentationTabRecipe(a));
+    if (state.cookingTab === "all" && fermentedDelta) return fermentedDelta;
+    const folderDelta = recipeContext(a).localeCompare(recipeContext(b));
+    if (folderDelta) return folderDelta;
+    return sortRecipes(a, b);
+  }
+
+  function isPotionRecipe(recipe) {
+    if (!recipe || recipe.kind === "build") return false;
+    const name = itemName(recipe.result);
+    const description = itemDescription(recipe.result);
+    const folder = recipe.folder || "";
+    const text = `${recipe.result} ${name} ${description} ${folder} ${recipe.processName || ""}`;
+
+    if (/\bHealing\/Medicines\b/i.test(folder)) return true;
+    if (/\bWitchcraft\/Battle potions\b/i.test(folder)) return true;
+    if (/\bWitchcraft\/Potions\b/i.test(folder)) return true;
+    if (/\bWitchcraft\/Material\b/i.test(folder) && /\bpotion\b/i.test(`${recipe.result} ${name}`) && !/^Reactive potion$/i.test(name)) return true;
+    if (/\b(potion|antidote|medicine|ointment|bandage|tincture|elixir|balm|salve)\b/i.test(`${recipe.result} ${name}`)) {
+      return !/\b(bomb|powder|tool|scroll|mount|broomstick|candle|necklace|amulet|essence)\b/i.test(text) && !/^Reactive potion$/i.test(name);
+    }
+    return /\b(restores? health|recovery health|resist poisoning|resist burning|combat potion|useful potion)\b/i.test(description);
+  }
+
+  function potionRecipeKindLabel(recipe) {
+    const folder = recipe.folder || "";
+    const name = itemName(recipe.result);
+    if (/\bHealing\/Medicines\b/i.test(folder)) return "Healing";
+    if (/\bBattle potions\b/i.test(folder)) return "Battle potion";
+    if (/\bWitchcraft\/Potions\b/i.test(folder)) return "Search potion";
+    if (/\btincture\b/i.test(name)) return "Tincture";
+    if (/\bpotion\b/i.test(name)) return "Potion";
+    if (/\b(ointment|bandage|antidote|medicine)\b/i.test(name)) return "Medicine";
+    return "Useful consumable";
+  }
+
+  function sortPotionRecipes(a, b) {
+    const labelDelta = potionRecipeKindLabel(a).localeCompare(potionRecipeKindLabel(b));
+    if (labelDelta) return labelDelta;
+    const folderDelta = recipeContext(a).localeCompare(recipeContext(b));
+    if (folderDelta) return folderDelta;
+    return sortRecipes(a, b);
   }
 
   function wikiFilterTypes() {
-    return new Set(["creature", "area", "fish", "shop", "skill"]);
+    return new Set(["creature", "area", "fish", "shop", "skill", "farming", "pet"]);
   }
 
   function sortRecipes(a, b) {
@@ -1477,26 +4423,152 @@
     if (type === "fish") return 2;
     if (type === "shop") return 3;
     if (type === "skill") return 4;
+    if (type === "farming") return 5;
+    if (type === "pet") return 6;
     return 9;
   }
 
   function itemSearchScore(item, query) {
+    const displayName = normalize(itemName(item.id));
     const name = normalize(item.name);
     const id = normalize(item.id);
-    if (name === query || id === query) return 0;
-    if (name.startsWith(query) || id.startsWith(query)) return 1;
-    if (name.includes(query)) return 2;
+    if (displayName === query || name === query || id === query) return 0;
+    if (displayName.startsWith(query) || name.startsWith(query) || id.startsWith(query)) return 1;
+    if (displayName.includes(query) || name.includes(query)) return 2;
     if (id.includes(query)) return 3;
     if (normalize(item.description).includes(query)) return 4;
-    return 5;
+    if (normalize(itemStatSearchText(item.id)).includes(query)) return 5;
+    return 6;
   }
 
   function itemRecord(itemId) {
     return items[itemId] || { id: itemId, name: itemId, description: "", icon: "" };
   }
 
+  function itemDescription(itemId) {
+    return cleanupPublicText(itemRecord(itemId).description || "").trim();
+  }
+
+  function itemStatDetails(itemId) {
+    const details = itemRecord(itemId).statDetails;
+    if (!details || !Array.isArray(details.rows) || !details.rows.length) return null;
+    return details;
+  }
+
+  function itemDetailGroups(itemId) {
+    const item = itemRecord(itemId);
+    const groups = [];
+    if (item.statDetails && Array.isArray(item.statDetails.rows)) {
+      groups.push(item.statDetails);
+    }
+    for (const group of item.detailGroups || []) {
+      if (group && Array.isArray(group.rows)) groups.push(group);
+    }
+    return groups
+      .map((group) => ({
+        ...group,
+        rows: group.rows.filter((row) => row?.label && row?.value),
+      }))
+      .filter((group) => group.rows.length);
+  }
+
+  function itemStatSearchText(itemId) {
+    return itemDetailGroups(itemId)
+      .flatMap((group) => [
+        group.basis || "",
+        group.category || "",
+        ...group.rows.flatMap((row) => [row.label, row.value]),
+      ])
+      .join(" ");
+  }
+
+  function itemStatSummaryHtml(itemId) {
+    const groups = itemDetailGroups(itemId);
+    if (!groups.length) return "";
+    return `
+      <div class="item-stat-summary">
+        ${groups.map((group) => `
+          <div class="item-stat-group">
+            <span class="item-stat-basis">${escapeHtml(group.basis || "Item details")}</span>
+            <dl>
+              ${group.rows.map((row) => `
+                <div>
+                  <dt>${escapeHtml(row.label)}</dt>
+                  <dd>${escapeHtml(row.value)}</dd>
+                </div>
+              `).join("")}
+            </dl>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function itemStatTooltipLines(itemId) {
+    const groups = itemDetailGroups(itemId);
+    if (!groups.length) return [];
+    const lines = [];
+    for (const group of groups) {
+      lines.push(group.basis || "Item details");
+      for (const row of group.rows) {
+        lines.push(`${row.label}: ${row.value}`);
+      }
+    }
+    return lines;
+  }
+
+  function itemTooltipText(itemId) {
+    const description = itemDescription(itemId);
+    const statLines = itemStatTooltipLines(itemId);
+    const lines = [itemName(itemId)];
+    if (description) lines.push(description);
+    lines.push(...statLines);
+    return lines.length > 1 ? lines.join("\n") : "";
+  }
+
+  function attachItemTooltip(element, itemId) {
+    element.dataset.itemId = itemId;
+    const tooltip = itemTooltipText(itemId);
+    element.removeAttribute("title");
+    element.setAttribute("aria-label", tooltip ? `${itemName(itemId)} details` : `${itemName(itemId)} (${itemId})`);
+    return element;
+  }
+
   function itemName(itemId) {
-    return itemRecord(itemId).name || itemId;
+    const item = itemRecord(itemId);
+    return skillBookDefaultName(item.id, item.name) || item.name || itemId;
+  }
+
+  function shopItemDisplayName(row, item) {
+    return skillBookVariantName(row.name || item?.name || "", row.note) ||
+      (row.itemId && skillBookPrefix(row.name || item?.name || "") ? itemName(row.itemId) : "") ||
+      row.name ||
+      item?.name ||
+      row.itemId ||
+      "Shop item";
+  }
+
+  function isSkillBookVariantName(name, note) {
+    return Boolean(skillBookVariantName(name, note));
+  }
+
+  function skillBookVariantName(name, note) {
+    const prefix = skillBookPrefix(name);
+    const suffix = String(note || "").trim();
+    if (!prefix || !suffix) return "";
+    return `${prefix}: ${suffix}`;
+  }
+
+  function skillBookDefaultName(itemId, name) {
+    const prefix = skillBookPrefix(name);
+    if (!prefix) return "";
+    if (/^SkillBookLevel(10|20|30)$/i.test(itemId || "")) return `${prefix}: Skill book`;
+    return "";
+  }
+
+  function skillBookPrefix(name) {
+    const match = String(name || "").trim().match(/^(Notes|Diary|Journal):/i);
+    return match ? match[1] : "";
   }
 
   function displaySkill(skill) {
@@ -1522,6 +4594,8 @@
     if (type === "fish") return "Fishing";
     if (type === "shop") return "NPC shop";
     if (type === "skill") return "Skill";
+    if (type === "farming") return "Farming";
+    if (type === "pet") return "Pets";
     return "Wiki";
   }
 
@@ -1533,17 +4607,61 @@
   }
 
   function recipeContext(recipe) {
-    if (recipe.kind === "process" && recipe.stations?.length) {
-      return stationNames(recipe).join(", ");
-    }
     return recipe.folder || "General";
   }
 
   function stationNames(recipe) {
-    return (recipe.stations || [])
-      .map((station) => station.name)
-      .filter(Boolean)
-      .map(itemName);
+    return uniqueStationIds(recipe).map(itemName);
+  }
+
+  function uniqueStationIds(recipe) {
+    const seen = new Set();
+    const ids = [];
+    for (const station of recipe?.stations || []) {
+      const stationId = station?.name;
+      if (!stationId || seen.has(stationId)) continue;
+      seen.add(stationId);
+      ids.push(stationId);
+    }
+    return ids;
+  }
+
+  function craftingStationsForRecipes(recipeList) {
+    const seen = new Set();
+    const ids = [];
+    for (const recipe of recipeList || []) {
+      for (const stationId of uniqueStationIds(recipe)) {
+        if (seen.has(stationId)) continue;
+        seen.add(stationId);
+        ids.push(stationId);
+      }
+    }
+    return ids.sort((a, b) => itemName(a).localeCompare(itemName(b)));
+  }
+
+  function craftingToolsForRecipes(recipeList) {
+    const seen = new Set();
+    const ids = [];
+    for (const recipe of recipeList || []) {
+      const toolId = recipe?.toolRequired;
+      if (!toolId || seen.has(toolId)) continue;
+      seen.add(toolId);
+      ids.push(toolId);
+    }
+    return ids.sort((a, b) => itemName(a).localeCompare(itemName(b)));
+  }
+
+  function craftingRequirementsForRecipes(recipeList) {
+    const seen = new Set();
+    const ids = [];
+    for (const recipe of recipeList || []) {
+      for (const requirementId of recipe?.bonusesRequired || []) {
+        if (!requirementId || seen.has(requirementId)) continue;
+        seen.add(requirementId);
+        ids.push(requirementId);
+      }
+    }
+    return ids.sort((a, b) => itemName(a).localeCompare(itemName(b)));
   }
 
   function formatMaterialLabel(material) {
@@ -1562,10 +4680,26 @@
   function formatTime(ms) {
     const seconds = Math.round(Number(ms) / 1000);
     if (!Number.isFinite(seconds) || seconds <= 0) return "";
-    if (seconds < 60) return `${seconds}s`;
+    if (seconds < 60) return `${seconds} ${seconds === 1 ? "sec" : "sec"}`;
+
     const minutes = Math.floor(seconds / 60);
-    const rest = seconds % 60;
-    return rest ? `${minutes}m ${rest}s` : `${minutes}m`;
+    const secondRest = seconds % 60;
+    if (minutes < 60) {
+      const minuteText = `${minutes} ${minutes === 1 ? "min" : "min"}`;
+      return secondRest ? `${minuteText} ${secondRest} sec` : minuteText;
+    }
+
+    const hours = Math.floor(minutes / 60);
+    const minuteRest = minutes % 60;
+    if (hours < 24) {
+      const hourText = `${hours} ${hours === 1 ? "hr" : "hr"}`;
+      return minuteRest ? `${hourText} ${minuteRest} min` : hourText;
+    }
+
+    const days = Math.floor(hours / 24);
+    const hourRest = hours % 24;
+    const dayText = `${days} ${days === 1 ? "day" : "days"}`;
+    return hourRest ? `${dayText} ${hourRest} hr` : dayText;
   }
 
   function initials(value) {
