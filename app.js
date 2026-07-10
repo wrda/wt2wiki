@@ -27,6 +27,24 @@
   const craftSkillsByItem = new Map();
   const usageByItem = new Map();
   const fishButcheringYieldsByFish = buildFishButcheringYields();
+  const weaponPoisonItemIds = ["WeaponPoison", "WeaponPoisonBurningSkeleton"];
+  const weaponPoisonRelatedItemIds = [
+    "WeaponPoison",
+    "WeaponPoisonBurningSkeleton",
+    "WitchcraftCauldron",
+    "WitchcraftPot",
+    "EmptyFlask",
+    "CornPie",
+    "PoisonArrow",
+  ];
+  const cthulhuPoisonComponentIds = new Set(["CthulhuEye", "CthulhuLarva", "CthulhuTentacles"]);
+  const poisonWitchcraftMaterialIds = new Set([
+    "ReagentPotion",
+    "BattleHungerPotion",
+    "BurningRingPotion",
+    "PoisonProjectilePotion",
+    "WeaknessPotion",
+  ]);
 
   for (const entry of wikiEntries) {
     if (entry.type !== "area") continue;
@@ -64,6 +82,9 @@
     sellItems: [],
     sellTab: "calculator",
     cookingTab: "all",
+    poisonTab: "recipes",
+    poisonMixerItems: [],
+    poisonMixerQuery: "",
     goldGoblinMode: "recommended",
   };
 
@@ -219,6 +240,10 @@
       navigate({ type: "cooking" });
       return;
     }
+    if (state.kind === "poison") {
+      navigate({ type: "poison" });
+      return;
+    }
     if (state.kind === "all") {
       navigate({ type: "home" });
       return;
@@ -270,6 +295,7 @@
     if (recipeFilterTypes().has(filter)) {
       if (filter === "cooking") return { type: "cooking" };
       if (filter === "potion") return { type: "potion" };
+      if (filter === "poison") return { type: "poison" };
       const recipe = recipes
         .filter((record) => recipeMatchesFilter(record, filter))
         .filter((record) => !query || recipeMatches(record, query))
@@ -319,7 +345,7 @@
       .sort(sortWikiEntries) : [];
 
     const matchingItems = allMatchingItems.slice(0, filter === "items" ? 160 : 35);
-    const recipeLimit = (filter === "cooking" || filter === "potion") ? filteredRecipes.length : (filter === "all" ? 95 : 160);
+    const recipeLimit = (filter === "cooking" || filter === "potion" || filter === "poison") ? filteredRecipes.length : (filter === "all" ? 95 : 160);
     const wikiLimit = filter === "all" ? 95 : 180;
 
     els.resultList.innerHTML = "";
@@ -470,7 +496,9 @@
     const context = recipeContext(recipe);
     const kindLabel = state.kind === "cooking" && isCookingRecipe(recipe)
       ? cookingRecipeKindLabel(recipe)
-      : recipeKindLabel(recipe.kind);
+      : state.kind === "poison" && isPoisonRecipe(recipe)
+        ? poisonRecipeKindLabel(recipe)
+        : recipeKindLabel(recipe.kind);
     body.innerHTML = `
       <span class="result-title" dir="auto">${escapeHtml(itemName(recipe.result))}</span>
       <span class="result-subtitle">${escapeHtml(kindLabel)} · ${escapeHtml(context)}${recipe.skill ? " · " + escapeHtml(displaySkill(recipe.skill)) : ""}${recipe.hidden ? " · Hidden" : ""}</span>
@@ -561,6 +589,13 @@
       setActiveModeButton();
       syncModeChrome();
       renderPotionBrowser();
+    } else if (next.type === "poison") {
+      state.mode = "recipes";
+      state.kind = "poison";
+      state.wikiKind = "all";
+      setActiveModeButton();
+      syncModeChrome();
+      renderPoisonBrowser();
     } else if (next.type === "home") {
       state.mode = "recipes";
       state.kind = "all";
@@ -891,6 +926,558 @@
     const copy = els.emptyInspector.querySelector("p");
     if (title) title.textContent = "Select a potion recipe";
     if (copy) copy.textContent = "Hover a potion for its item description, or open it to inspect ingredients, stations, tools, and sell data.";
+  }
+
+  function renderPoisonBrowser() {
+    const allPoisonRecipes = poisonRecipes().sort(sortPoisonRecipes);
+    const weaponRelatedRecipes = weaponPoisonRelatedRecipes().sort(sortPoisonRecipes);
+    const activeRecipes = state.poisonTab === "weapon" ? weaponRelatedRecipes : allPoisonRecipes;
+    const hiddenCount = activeRecipes.filter((recipe) => recipe.hidden).length;
+
+    els.recipeKind.textContent = "Poisons";
+    els.recipeTitle.textContent = state.poisonTab === "weapon" ? "Weapon Poison" : "Poison recipes";
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(renderPoisonTabControls(allPoisonRecipes.length, weaponPoisonItemIds.filter((id) => items[id]).length));
+
+    if (state.poisonTab === "weapon") {
+      els.recipeDetails.appendChild(pill(`${weaponPoisonItemIds.filter((id) => items[id]).length} weapon poison items`));
+      els.recipeDetails.appendChild(pill(`${weaponRelatedRecipes.length} related recipes`));
+      els.recipeDetails.appendChild(pill("Local item data, related recipes, and charge helpers"));
+      renderWeaponPoisonPanel(weaponRelatedRecipes);
+      renderPoisonInspector("weapon");
+      return;
+    }
+
+    els.recipeDetails.appendChild(pill(`${allPoisonRecipes.length} recipes`));
+    els.recipeDetails.appendChild(pill(`${hiddenCount} hidden included`));
+    els.recipeDetails.appendChild(pill("Witchcraft toxins, poison ammunition, bombs, and anti-poison recipes"));
+
+    const panel = document.createElement("div");
+    panel.className = "station-recipe-browser cooking-recipe-browser potion-recipe-browser poison-recipe-browser";
+
+    const grid = document.createElement("div");
+    grid.className = "station-recipe-grid cooking-recipe-grid potion-recipe-grid poison-recipe-grid";
+    for (const recipe of allPoisonRecipes) {
+      grid.appendChild(renderPoisonRecipeCard(recipe));
+    }
+
+    if (!allPoisonRecipes.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No poison recipes were found in the local data.";
+      grid.appendChild(empty);
+    }
+
+    panel.appendChild(grid);
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+    renderPoisonInspector("recipes");
+  }
+
+  function renderPoisonTabControls(recipeCount, weaponCount) {
+    const tabs = document.createElement("div");
+    tabs.className = "sell-tabs cooking-tabs poison-tabs";
+    [
+      ["recipes", `Poison recipes (${recipeCount})`],
+      ["weapon", `Weapon Poison (${weaponCount})`],
+    ].forEach(([id, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sell-tab cooking-tab poison-tab";
+      button.textContent = label;
+      button.title = `Open ${label}`;
+      button.setAttribute("aria-pressed", state.poisonTab === id ? "true" : "false");
+      button.classList.toggle("is-active", state.poisonTab === id);
+      button.addEventListener("click", () => {
+        state.poisonTab = id;
+        renderPoisonBrowser();
+        renderSearchResults();
+      });
+      tabs.appendChild(button);
+    });
+    return tabs;
+  }
+
+  function renderPoisonRecipeCard(recipe) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "station-recipe-card cooking-recipe-card potion-recipe-card poison-recipe-card";
+    card.dataset.recipeId = recipe.id;
+    attachItemTooltip(card, recipe.result);
+    if (recipe.hidden) card.classList.add("is-hidden-recipe");
+    card.appendChild(renderIcon(recipe.result));
+
+    const body = document.createElement("span");
+    body.className = "station-recipe-body";
+    const materials = (recipe.materials || []).slice(0, 4).map(formatMaterialLabel).join(" · ");
+    const more = (recipe.materials || []).length > 4 ? ` · +${(recipe.materials || []).length - 4} more` : "";
+    const stationText = stationNames(recipe).slice(0, 3).join(", ");
+    const description = poisonRecipeDescription(recipe);
+    const statText = compactItemDetailText(recipe.result, 3);
+    const meta = [
+      poisonRecipeKindLabel(recipe),
+      recipe.skill ? displaySkill(recipe.skill) : "",
+      recipe.level ? `level ${recipe.level}` : "",
+      recipe.timeMs ? formatTime(recipe.timeMs) : "",
+      stationText,
+    ].filter(Boolean).join(" · ");
+
+    body.innerHTML = `
+      <span class="station-recipe-title" dir="auto">${escapeHtml(itemName(recipe.result))}${recipe.amount > 1 ? ` x${recipe.amount}` : ""}</span>
+      <span class="station-recipe-meta">${escapeHtml(meta)}</span>
+      <span class="station-recipe-description">${escapeHtml(description)}</span>
+      ${statText ? `<span class="station-recipe-details">${escapeHtml(statText)}</span>` : ""}
+      <span class="station-recipe-materials">${escapeHtml(materials || "No materials")}${escapeHtml(more)}</span>
+    `;
+
+    card.appendChild(body);
+    card.addEventListener("click", () => navigate({ type: "recipe", id: recipe.id }));
+    return card;
+  }
+
+  function renderWeaponPoisonPanel(relatedRecipes) {
+    const panel = document.createElement("div");
+    panel.className = "poison-weapon-panel";
+
+    const note = document.createElement("div");
+    note.className = "poison-note";
+    note.innerHTML = `
+      <strong>Weapon Poison system</strong>
+      <p>Weapon Poison is not exposed as a normal craft recipe in the local craft/process tables. The item and skill data describe it as a special Witchcraft cauldron system: combine organs or components in a witchcrafter's cauldron, then apply the poison to the weapon in hand.</p>
+    `;
+    panel.appendChild(note);
+
+    panel.appendChild(renderWeaponPoisonFacts());
+    panel.appendChild(renderWeaponPoisonMixer());
+
+    const itemHeading = document.createElement("div");
+    itemHeading.className = "poison-section-title";
+    itemHeading.innerHTML = `
+      <strong>Core items and modifiers</strong>
+      <span>${weaponPoisonRelatedItemIds.filter((id) => items[id]).length} items</span>
+    `;
+    panel.appendChild(itemHeading);
+
+    const itemGrid = document.createElement("div");
+    itemGrid.className = "poison-item-grid";
+    for (const itemId of weaponPoisonRelatedItemIds) {
+      if (!items[itemId]) continue;
+      itemGrid.appendChild(renderPoisonItemCard(itemId));
+    }
+    panel.appendChild(itemGrid);
+
+    panel.appendChild(renderWeaponPoisonComponentList());
+
+    const recipeBlock = document.createElement("div");
+    recipeBlock.className = "station-recipe-browser poison-related-recipes";
+    const recipeHeading = document.createElement("div");
+    recipeHeading.className = "poison-section-title";
+    recipeHeading.innerHTML = `
+      <strong>Related recipes</strong>
+      <span>${relatedRecipes.length} recipes</span>
+    `;
+    recipeBlock.appendChild(recipeHeading);
+
+    const recipeGrid = document.createElement("div");
+    recipeGrid.className = "station-recipe-grid poison-recipe-grid";
+    for (const recipe of relatedRecipes) {
+      recipeGrid.appendChild(renderPoisonRecipeCard(recipe));
+    }
+    if (!relatedRecipes.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No direct Weapon Poison recipe was found in the local craft/process data.";
+      recipeGrid.appendChild(empty);
+    }
+    recipeBlock.appendChild(recipeGrid);
+    panel.appendChild(recipeBlock);
+
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(panel);
+  }
+
+  function renderWeaponPoisonFacts() {
+    const wrap = document.createElement("div");
+    wrap.className = "poison-facts-grid";
+
+    const witchcraftEntry = wikiEntries.find((entry) => entry.id === "skill:Witchcraft" || normalize(entry.name) === "witchcraft");
+    const poisonChargeBonus = (witchcraftEntry?.bonuses || []).find((bonus) => /weapon poison charges/i.test(bonus.name || bonus.text || ""));
+
+    const facts = [
+      {
+        title: "How to make it",
+        value: "Use the Witchcrafter's cauldron",
+        detail: "Local item text says organs/components are used for crafting weapon poisons in a witchcrafter's cauldron.",
+      },
+      {
+        title: "Required container",
+        value: "Empty Flask",
+        detail: itemDescription("EmptyFlask") || "A flask is required by the local item text for weapon poison and potions.",
+      },
+      {
+        title: "Witchcraft bonus",
+        value: poisonChargeBonus?.text || "+0.6% charges per level, up to +45% at level 75",
+        detail: "This bonus increases the number of weapon poison charges when applying the poison.",
+      },
+      {
+        title: "Food modifier",
+        value: "Corn pie: +10% charges for 10 min",
+        detail: "Corn pie increases the number of charges when applying weapon poison.",
+      },
+      {
+        title: "Known charge example",
+        value: "Cthulhu organs: 220 charges",
+        detail: "Latest official balance note found: Cthulhu organ weapon poison charges were reduced from 660 to 220.",
+      },
+      {
+        title: "Known effects",
+        value: "Life-stealing and chilling",
+        detail: "Official notes describe weapon poison as gaining different properties/effects from organs; life-stealing absorbs 10% of inflicted damage up to its value, and chilling deals gradual damage with slowing.",
+      },
+      {
+        title: "Missing from local data",
+        value: "Base charges and poison damage per organ",
+        detail: "The extracted craft, process, item, and effect files do not include a complete per-organ charge or damage table.",
+      },
+    ];
+
+    for (const fact of facts) wrap.appendChild(renderPoisonFactCard(fact));
+    return wrap;
+  }
+
+  function renderPoisonFactCard(fact) {
+    const card = document.createElement("div");
+    card.className = "poison-fact-card";
+    card.innerHTML = `
+      <small>${escapeHtml(fact.title)}</small>
+      <strong>${escapeHtml(fact.value)}</strong>
+      <span>${escapeHtml(fact.detail)}</span>
+    `;
+    return card;
+  }
+
+  function renderWeaponPoisonMixer() {
+    const section = document.createElement("div");
+    section.className = "poison-mixer";
+
+    const componentIds = weaponPoisonComponentItemIds();
+    const filteredIds = filterWeaponPoisonMixerItems(componentIds);
+    const selectedIds = state.poisonMixerItems.filter((itemId) => items[itemId]);
+
+    const heading = document.createElement("div");
+    heading.className = "poison-section-title";
+    heading.innerHTML = `
+      <strong>Organ mixer</strong>
+      <span>${selectedIds.length} selected</span>
+    `;
+    section.appendChild(heading);
+
+    const intro = document.createElement("div");
+    intro.className = "poison-note poison-compact-note";
+    intro.innerHTML = `
+      <strong>Choose organs to preview the poison result</strong>
+      <p>This planner uses confirmed local item text and official notes. If a mix has no confirmed rule in the current dataset, it will be marked as unverified instead of showing a guessed effect.</p>
+    `;
+    section.appendChild(intro);
+
+    const controls = document.createElement("div");
+    controls.className = "poison-mixer-controls";
+
+    const searchLabel = document.createElement("label");
+    searchLabel.className = "field";
+    searchLabel.innerHTML = `
+      <span>Filter organs</span>
+      <input type="search" value="${escapeHtml(state.poisonMixerQuery)}" placeholder="Search organ or component...">
+    `;
+    const searchInput = searchLabel.querySelector("input");
+    searchInput.addEventListener("input", () => {
+      state.poisonMixerQuery = searchInput.value.trim();
+      renderPoisonBrowser();
+    });
+    controls.appendChild(searchLabel);
+
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "secondary-action poison-mixer-clear";
+    clear.textContent = "Clear mix";
+    clear.disabled = !selectedIds.length;
+    clear.addEventListener("click", () => {
+      state.poisonMixerItems = [];
+      renderPoisonBrowser();
+    });
+    controls.appendChild(clear);
+    section.appendChild(controls);
+
+    section.appendChild(renderWeaponPoisonMixerSelection(selectedIds));
+    section.appendChild(renderWeaponPoisonMixerResult(selectedIds));
+
+    const pickerTitle = document.createElement("div");
+    pickerTitle.className = "poison-section-title poison-picker-title";
+    pickerTitle.innerHTML = `
+      <strong>Available organs/components</strong>
+      <span>${filteredIds.length} shown</span>
+    `;
+    section.appendChild(pickerTitle);
+
+    const picker = document.createElement("div");
+    picker.className = "poison-mixer-picker";
+    for (const itemId of filteredIds) picker.appendChild(renderWeaponPoisonMixerChoice(itemId, selectedIds.includes(itemId)));
+    if (!filteredIds.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No organs match this filter.";
+      picker.appendChild(empty);
+    }
+    section.appendChild(picker);
+    return section;
+  }
+
+  function filterWeaponPoisonMixerItems(componentIds) {
+    const query = normalize(state.poisonMixerQuery);
+    if (!query) return componentIds;
+    return componentIds.filter((itemId) => {
+      const item = items[itemId] || {};
+      return [
+        itemId,
+        itemName(itemId),
+        item.description,
+        poisonItemRole(itemId),
+        weaponPoisonMixerClues([itemId]).map((clue) => clue.effect).join(" "),
+      ].some((value) => normalize(value).includes(query));
+    });
+  }
+
+  function renderWeaponPoisonMixerSelection(selectedIds) {
+    const wrap = document.createElement("div");
+    wrap.className = "poison-mixer-selection";
+    if (!selectedIds.length) {
+      wrap.innerHTML = `<span class="poison-mixer-empty">No organs selected. Choose one or more organs below.</span>`;
+      return wrap;
+    }
+
+    for (const itemId of selectedIds) {
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "poison-mixer-chip";
+      chip.title = `Remove ${itemName(itemId)}`;
+      attachItemTooltip(chip, itemId);
+      chip.appendChild(renderIcon(itemId));
+      const label = document.createElement("span");
+      label.textContent = itemName(itemId);
+      chip.appendChild(label);
+      chip.addEventListener("click", () => {
+        state.poisonMixerItems = state.poisonMixerItems.filter((id) => id !== itemId);
+        renderPoisonBrowser();
+      });
+      wrap.appendChild(chip);
+    }
+    return wrap;
+  }
+
+  function renderWeaponPoisonMixerResult(selectedIds) {
+    const result = evaluateWeaponPoisonMix(selectedIds);
+    const box = document.createElement("div");
+    box.className = `poison-mixer-result is-${result.status}`;
+
+    const effects = result.effects.length
+      ? result.effects.map((effect) => `<span>${escapeHtml(effect)}</span>`).join("")
+      : `<span>No effect selected yet</span>`;
+
+    const notes = result.notes.length
+      ? `<ul>${result.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>`
+      : "";
+
+    box.innerHTML = `
+      <div class="poison-mixer-result-head">
+        <small>${escapeHtml(result.statusLabel)}</small>
+        <strong>${escapeHtml(result.title)}</strong>
+      </div>
+      <div class="poison-mixer-effects">${effects}</div>
+      ${result.charges ? `<div class="poison-mixer-charge">${escapeHtml(result.charges)}</div>` : ""}
+      ${notes}
+    `;
+    return box;
+  }
+
+  function renderWeaponPoisonMixerChoice(itemId, selected) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "poison-mixer-choice";
+    button.classList.toggle("is-selected", selected);
+    attachItemTooltip(button, itemId);
+    button.appendChild(renderIcon(itemId));
+
+    const body = document.createElement("span");
+    body.className = "poison-mixer-choice-body";
+    const clues = weaponPoisonMixerClues([itemId]);
+    const sourceCount = mergedDropSources(itemId).length;
+    body.innerHTML = `
+      <strong>${escapeHtml(itemName(itemId))}</strong>
+      <small>${escapeHtml(clues.map((clue) => clue.effect).join(" · ") || poisonItemRole(itemId))}</small>
+      <em>${sourceCount ? `${sourceCount} sources` : "source unknown"}</em>
+    `;
+    button.appendChild(body);
+    button.addEventListener("click", () => {
+      if (selected) {
+        state.poisonMixerItems = state.poisonMixerItems.filter((id) => id !== itemId);
+      } else {
+        state.poisonMixerItems = [...state.poisonMixerItems, itemId];
+      }
+      renderPoisonBrowser();
+    });
+    return button;
+  }
+
+  function evaluateWeaponPoisonMix(selectedIds) {
+    if (!selectedIds.length) {
+      return {
+        status: "empty",
+        statusLabel: "No mix",
+        title: "Select organs to preview a result",
+        effects: [],
+        charges: "",
+        notes: ["The planner will show confirmed effects when the selected organs match a known rule."],
+      };
+    }
+
+    const allCthulhu = selectedIds.every((itemId) => cthulhuPoisonComponentIds.has(itemId));
+    const hasCthulhu = selectedIds.some((itemId) => cthulhuPoisonComponentIds.has(itemId));
+    const clues = weaponPoisonMixerClues(selectedIds);
+
+    if (allCthulhu) {
+      return {
+        status: "known",
+        statusLabel: "Known charge group",
+        title: "Cthulhu organ weapon poison",
+        effects: ["Weapon poison", "Cthulhu organ group"],
+        charges: "Base charges: 220 before Witchcraft level and Corn pie bonuses.",
+        notes: [
+          "This is the only organ group with a confirmed charge value found so far.",
+          "Exact poison damage or secondary effect is not exposed in the current local files.",
+        ],
+      };
+    }
+
+    if (hasCthulhu) {
+      return {
+        status: "partial",
+        statusLabel: "Partially known",
+        title: "Cthulhu organ mixed with other components",
+        effects: ["Weapon poison", ...clues.map((clue) => clue.effect)],
+        charges: "Cthulhu-only poison is confirmed at 220 base charges; mixed-organ charge output is not confirmed.",
+        notes: [
+          "The current dataset does not confirm how Cthulhu organs behave when mixed with non-Cthulhu organs.",
+          "Use this as a verification target inside the in-game Witchcraft window.",
+        ],
+      };
+    }
+
+    if (clues.length) {
+      return {
+        status: "partial",
+        statusLabel: "Effect clue only",
+        title: "Unverified organ effect clues",
+        effects: clues.map((clue) => clue.effect),
+        charges: "",
+        notes: [
+          "These clues come from organ names and official examples of possible poison effects.",
+          "The exact mix result is not confirmed in the extracted local data.",
+        ],
+      };
+    }
+
+    return {
+      status: "unknown",
+      statusLabel: "Unknown mix",
+      title: "No confirmed effect mapping found",
+      effects: ["Weapon poison component"],
+      charges: "",
+      notes: [
+        "These organs are marked as valid cauldron components, but their output effect is not present in the current files.",
+        "A screenshot from the in-game Witchcraft organ journal would let us fill this rule accurately.",
+      ],
+    };
+  }
+
+  function weaponPoisonMixerClues(itemIds) {
+    const text = itemIds.map((itemId) => `${itemId} ${itemName(itemId)} ${itemDescription(itemId)}`).join(" ");
+    const clues = [];
+    const add = (effect, reason) => {
+      if (!clues.some((clue) => clue.effect === effect)) clues.push({ effect, reason });
+    };
+    if (/\b(frost|cold|ice)\b/i.test(text)) add("Chilling clue", "Official notes mention chilling as a weapon poison effect.");
+    if (/\b(vampire|blood|ghoul|living flesh|heart)\b/i.test(text)) add("Life-stealing clue", "Official notes mention life-stealing as a weapon poison property.");
+    if (/\b(snake|viper|scorpion|spider|mucus|fang|gland|poison)\b/i.test(text)) add("Toxic/poison clue", "The selected organ name suggests a poison theme.");
+    if (/\b(fire|blazing|demon)\b/i.test(text)) add("Burning clue", "Official notes mention chilling is incompatible with burning, so burning-style poisons may exist.");
+    return clues;
+  }
+
+  function renderWeaponPoisonComponentList() {
+    const section = document.createElement("div");
+    section.className = "poison-components";
+
+    const componentIds = weaponPoisonComponentItemIds();
+    const heading = document.createElement("div");
+    heading.className = "poison-section-title";
+    heading.innerHTML = `
+      <strong>Cauldron organ/component candidates</strong>
+      <span>${componentIds.length} items</span>
+    `;
+    section.appendChild(heading);
+
+    const note = document.createElement("div");
+    note.className = "poison-note poison-compact-note";
+    note.innerHTML = `
+      <strong>About the numbers</strong>
+      <p>These items are marked in local item descriptions as weapon poison cauldron components. Exact charge and poison strength values are only shown when a confirmed source exists; otherwise the card keeps the item as a candidate without inventing a number.</p>
+    `;
+    section.appendChild(note);
+
+    const grid = document.createElement("div");
+    grid.className = "poison-item-grid poison-component-grid";
+    for (const itemId of componentIds) grid.appendChild(renderPoisonItemCard(itemId));
+    section.appendChild(grid);
+    return section;
+  }
+
+  function renderPoisonItemCard(itemId) {
+    const card = document.createElement("button");
+    card.type = "button";
+    card.className = "poison-item-card";
+    attachItemTooltip(card, itemId);
+    card.appendChild(renderIcon(itemId));
+
+    const body = document.createElement("span");
+    body.className = "poison-item-body";
+    const description = itemDescriptionWithFallback(itemId);
+    const stats = compactItemDetailText(itemId, 4);
+    const produced = recipesByResult.get(itemId)?.length || 0;
+    const used = usageByItem.get(itemId)?.length || 0;
+    const sources = mergedDropSources(itemId).length;
+    body.innerHTML = `
+      <strong dir="auto">${escapeHtml(itemName(itemId))}</strong>
+      <small>${escapeHtml(poisonItemRole(itemId))}</small>
+      <span>${escapeHtml(description)}</span>
+      ${stats ? `<em>${escapeHtml(stats)}</em>` : ""}
+      <small>recipes: ${produced} create · ${used} use · ${sources} known sources</small>
+    `;
+    card.appendChild(body);
+    card.addEventListener("click", () => navigate({ type: "item", id: itemId }));
+    return card;
+  }
+
+  function renderPoisonInspector(tab) {
+    els.inspectorContent.classList.add("is-hidden");
+    els.inspectorContent.classList.remove("pet-inspector-content");
+    els.emptyInspector.classList.remove("is-hidden");
+    const title = els.emptyInspector.querySelector("h2");
+    const copy = els.emptyInspector.querySelector("p");
+    if (title) title.textContent = tab === "weapon" ? "Select a poison item" : "Select a poison recipe";
+    if (copy) {
+      copy.textContent = tab === "weapon"
+        ? "Open a Weapon Poison item to see its full local description, sources, uses, stats, and prices."
+        : "Hover a poison for its item description, or open it to inspect ingredients, stations, tools, and sources.";
+    }
   }
 
   function renderSellCalculatorPanel() {
@@ -4205,7 +4792,7 @@
   }
 
   function recipeFilterTypes() {
-    return new Set(["craft", "build", "process", "cooking", "potion"]);
+    return new Set(["craft", "build", "process", "cooking", "potion", "poison"]);
   }
 
   function recipeMatchesFilter(recipe, filter) {
@@ -4216,6 +4803,7 @@
         : isCookingRecipe(recipe) && !isFermentationTabRecipe(recipe);
     }
     if (filter === "potion") return isPotionRecipe(recipe);
+    if (filter === "poison") return isPoisonRecipe(recipe);
     return recipe.kind === filter;
   }
 
@@ -4225,6 +4813,10 @@
 
   function potionRecipes() {
     return recipes.filter(isPotionRecipe);
+  }
+
+  function poisonRecipes() {
+    return recipes.filter(isPoisonRecipe);
   }
 
   function isCookingRecipe(recipe) {
@@ -4343,6 +4935,118 @@
     return sortRecipes(a, b);
   }
 
+  function isPoisonRecipe(recipe) {
+    if (!recipe || recipe.kind === "build") return false;
+    const result = recipe.result || "";
+    const name = itemName(result);
+    const description = itemDescription(result);
+    const folder = recipe.folder || "";
+    const resultText = [
+      result,
+      name,
+      description,
+      folder,
+      recipe.processName || "",
+    ].join(" ");
+    const materialText = [
+      ...(recipe.materials || []).map((material) => `${material.item} ${itemName(material.item)}`),
+    ].join(" ");
+
+    if (/\bWitchcraft\/Organs\b/i.test(folder)) return false;
+    if (["CornPie", "EmptyFlask", "WideBandages", "PotionFindMushroomAmanitas"].includes(result)) return false;
+    if (poisonWitchcraftMaterialIds.has(result)) return true;
+    if (/\bWitchcraft\/Battle potions\b/i.test(folder)) return true;
+    if (result === "PoisonBomb" || result === "StickyBolt" || result === "WeakAntidote") return true;
+    if (weaponPoisonItemIds.includes(result)) return true;
+    if (/\b(poison|toxic|toxin|antidote)\b/i.test(resultText)) {
+      return !/\b(venom belt|poison strike|necklace|amulet|mount|skin|altar|empty flask|searching for poison mushrooms)\b/i.test(`${resultText} ${materialText}`);
+    }
+    return false;
+  }
+
+  function weaponPoisonRelatedRecipes() {
+    const directRelated = new Set([
+      "WitchcraftPot",
+      "CornPie",
+      "RawCornPie",
+      "EmptyFlask",
+      "PoisonArrow",
+      "StickyBolt",
+    ]);
+    return recipes.filter((recipe) => {
+      if (!recipe) return false;
+      if (weaponPoisonItemIds.includes(recipe.result)) return true;
+      if (directRelated.has(recipe.result)) return true;
+      return (recipe.materials || []).some((material) => weaponPoisonItemIds.includes(material.item));
+    });
+  }
+
+  function poisonRecipeKindLabel(recipe) {
+    const result = recipe?.result || "";
+    const folder = recipe?.folder || "";
+    const name = itemName(result);
+
+    if (weaponPoisonItemIds.includes(result)) return "Weapon poison";
+    if (result === "ReagentPotion") return "Witchcraft reagent base";
+    if (result === "PoisonBomb") return "Poison explosive";
+    if (result === "StickyBolt") return "Poison ammunition";
+    if (result === "WeakAntidote") return "Antidote";
+    if (/\bWitchcraft\/Battle potions\b/i.test(folder)) return "Witchcraft battle potion";
+    if (poisonWitchcraftMaterialIds.has(result)) return "Witchcraft ability reagent";
+    if (/\btoxic|toxin\b/i.test(`${result} ${name}`)) return "Toxic material";
+    if (/\bpoison\b/i.test(`${result} ${name}`)) return "Poison";
+    return "Poison-related recipe";
+  }
+
+  function sortPoisonRecipes(a, b) {
+    const labelDelta = poisonRecipeKindLabel(a).localeCompare(poisonRecipeKindLabel(b));
+    if (labelDelta) return labelDelta;
+    const folderDelta = recipeContext(a).localeCompare(recipeContext(b));
+    if (folderDelta) return folderDelta;
+    return sortRecipes(a, b);
+  }
+
+  function poisonRecipeDescription(recipe) {
+    const result = recipe?.result || "";
+    const description = itemDescription(result);
+    if (description) return description;
+    const stats = compactItemDetailText(result, 3);
+    if (stats) return `No written item description was found in the local files. Fixed stats: ${stats}.`;
+    if (recipe?.materials?.length) return "No written item description was found in the local files; the recipe ingredients are shown below.";
+    return "No written item description was found in the local files.";
+  }
+
+  function weaponPoisonComponentItemIds() {
+    return Object.entries(items)
+      .filter(([, item]) => /crafting weapon poisons? in a witchcrafter/i.test(item.description || ""))
+      .map(([itemId]) => itemId)
+      .sort((a, b) => {
+        const aCthulhu = Number(cthulhuPoisonComponentIds.has(a));
+        const bCthulhu = Number(cthulhuPoisonComponentIds.has(b));
+        if (aCthulhu !== bCthulhu) return bCthulhu - aCthulhu;
+        const rarityDelta = Number(items[b]?.baseRarity || 0) - Number(items[a]?.baseRarity || 0);
+        if (rarityDelta) return rarityDelta;
+        return itemName(a).localeCompare(itemName(b));
+      });
+  }
+
+  function poisonItemRole(itemId) {
+    if (cthulhuPoisonComponentIds.has(itemId)) return "Cthulhu organ component · known charge group: 220";
+    if (/crafting weapon poisons? in a witchcrafter/i.test(itemDescription(itemId))) {
+      return "Organ/component for cauldron weapon poison";
+    }
+    const roles = {
+      WeaponPoison: "Applies poison charges to the weapon in hand",
+      WeaponPoisonBurningSkeleton: "Special weapon poison variant",
+      WitchcraftCauldron: "Workbench item used for potions and weapon poison",
+      WitchcraftPot: "Placed station built from the cauldron",
+      EmptyFlask: "Container needed for weapon poison and potions",
+      PoisonArrow: "Poison ammunition found in drops and used by recipes",
+      CornPie: "Food that increases weapon poison charges",
+    };
+    return roles[itemId] || "Poison-related item";
+  }
+
   function wikiFilterTypes() {
     return new Set(["creature", "area", "fish", "shop", "skill", "farming", "pet"]);
   }
@@ -4449,6 +5153,12 @@
     return cleanupPublicText(itemRecord(itemId).description || "").trim();
   }
 
+  function itemDescriptionWithFallback(itemId) {
+    const description = itemDescription(itemId);
+    if (description) return description;
+    return "No written item description was found in the local files. Use the item details, sources, and recipe links below for the confirmed local data.";
+  }
+
   function itemStatDetails(itemId) {
     const details = itemRecord(itemId).statDetails;
     if (!details || !Array.isArray(details.rows) || !details.rows.length) return null;
@@ -4480,6 +5190,17 @@
         ...group.rows.flatMap((row) => [row.label, row.value]),
       ])
       .join(" ");
+  }
+
+  function compactItemDetailText(itemId, limit = 4) {
+    const rows = itemDetailGroups(itemId)
+      .flatMap((group) => group.rows || [])
+      .filter((row) => row?.label && row?.value)
+      .filter((row) => !/^type$/i.test(row.label) && !/^slot$/i.test(row.label));
+    return rows
+      .slice(0, limit)
+      .map((row) => `${row.label}: ${row.value}`)
+      .join(" · ");
   }
 
   function itemStatSummaryHtml(itemId) {

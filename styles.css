@@ -1415,6 +1415,21 @@ button.shop-item-card:hover {
   white-space: nowrap;
 }
 
+.station-recipe-description,
+.station-recipe-details {
+  display: block;
+  overflow: hidden;
+  color: #cfe6d6;
+  font-size: 12px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.station-recipe-details {
+  color: #f1d58a;
+}
+
 .item-tile {
   position: relative;
   display: grid;
@@ -2019,6 +2034,10 @@ button.source-row:hover {
   grid-template-columns: repeat(2, minmax(160px, 260px));
 }
 
+.poison-tabs {
+  grid-template-columns: repeat(2, minmax(170px, 280px));
+}
+
 .sell-tab {
   min-height: 42px;
   border: 1px solid rgba(255, 255, 255, 0.105);
@@ -2074,6 +2093,365 @@ button.source-row:hover {
 
 .buyup-calculator {
   margin-top: 0;
+}
+
+.poison-weapon-panel {
+  display: grid;
+  gap: 12px;
+  min-width: min(100%, 760px);
+  max-width: 1180px;
+}
+
+.poison-note {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(213, 168, 79, 0.28);
+  border-radius: 7px;
+  background: rgba(213, 168, 79, 0.07);
+  color: var(--muted);
+  padding: 12px;
+}
+
+.poison-note strong,
+.poison-section-title strong {
+  color: #ffe0a3;
+  font-weight: 900;
+}
+
+.poison-note p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.poison-compact-note {
+  padding: 10px;
+}
+
+.poison-facts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 9px;
+}
+
+.poison-fact-card {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid rgba(88, 184, 107, 0.2);
+  border-radius: 7px;
+  background: rgba(88, 184, 107, 0.055);
+}
+
+.poison-fact-card small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.poison-fact-card strong {
+  color: #fff3c6;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.poison-fact-card span {
+  color: #cfe6d6;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.poison-components {
+  display: grid;
+  gap: 9px;
+}
+
+.poison-mixer {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(88, 184, 107, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 22, 18, 0.7);
+}
+
+.poison-mixer-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.poison-mixer-clear {
+  min-height: 42px;
+  padding: 0 14px;
+}
+
+.poison-mixer-selection {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-height: 40px;
+  align-items: center;
+}
+
+.poison-mixer-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.poison-mixer-chip {
+  display: inline-grid;
+  grid-template-columns: 28px auto;
+  gap: 7px;
+  align-items: center;
+  max-width: 210px;
+  border: 1px solid rgba(213, 168, 79, 0.42);
+  border-radius: 999px;
+  background: rgba(213, 168, 79, 0.12);
+  color: #fff3c6;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 4px 10px 4px 5px;
+}
+
+.poison-mixer-chip .item-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.poison-mixer-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poison-mixer-result {
+  display: grid;
+  gap: 9px;
+  border: 1px solid rgba(213, 168, 79, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  padding: 12px;
+}
+
+.poison-mixer-result.is-known {
+  border-color: rgba(88, 184, 107, 0.56);
+  background: rgba(88, 184, 107, 0.09);
+}
+
+.poison-mixer-result.is-partial {
+  border-color: rgba(213, 168, 79, 0.52);
+  background: rgba(213, 168, 79, 0.075);
+}
+
+.poison-mixer-result.is-unknown {
+  border-color: rgba(210, 83, 83, 0.42);
+  background: rgba(210, 83, 83, 0.055);
+}
+
+.poison-mixer-result-head {
+  display: grid;
+  gap: 3px;
+}
+
+.poison-mixer-result-head small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.poison-mixer-result-head strong {
+  color: #fff;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.poison-mixer-effects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.poison-mixer-effects span,
+.poison-mixer-charge {
+  border: 1px solid rgba(213, 168, 79, 0.3);
+  border-radius: 999px;
+  background: rgba(213, 168, 79, 0.12);
+  color: #fff3c6;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 5px 9px;
+}
+
+.poison-mixer-charge {
+  width: fit-content;
+  border-color: rgba(88, 184, 107, 0.34);
+  background: rgba(88, 184, 107, 0.12);
+  color: #dff7df;
+}
+
+.poison-mixer-result ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.poison-picker-title {
+  margin-top: 2px;
+}
+
+.poison-mixer-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 7px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.poison-mixer-choice {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 7px;
+  text-align: left;
+}
+
+.poison-mixer-choice:hover,
+.poison-mixer-choice.is-selected {
+  border-color: rgba(88, 184, 107, 0.6);
+  background: rgba(88, 184, 107, 0.11);
+}
+
+.poison-mixer-choice .item-icon {
+  width: 42px;
+  height: 42px;
+}
+
+.poison-mixer-choice-body {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.poison-mixer-choice-body strong,
+.poison-mixer-choice-body small,
+.poison-mixer-choice-body em {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poison-mixer-choice-body strong {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.poison-mixer-choice-body small {
+  color: #cfe6d6;
+  font-size: 11px;
+}
+
+.poison-mixer-choice-body em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.poison-item-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 9px;
+}
+
+.poison-item-card {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid rgba(213, 168, 79, 0.25);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  padding: 10px;
+  text-align: left;
+}
+
+.poison-item-card:hover,
+.poison-recipe-card:hover {
+  border-color: rgba(213, 168, 79, 0.65);
+  background: rgba(213, 168, 79, 0.095);
+}
+
+.poison-item-card .item-icon {
+  width: 52px;
+  height: 52px;
+}
+
+.poison-item-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.poison-item-body strong {
+  overflow: hidden;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poison-item-body small,
+.poison-item-body span,
+.poison-item-body em {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.poison-item-body span {
+  color: #cfe6d6;
+}
+
+.poison-item-body em {
+  color: #f1d58a;
+}
+
+.poison-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .buyup-controls,
