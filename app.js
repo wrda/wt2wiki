@@ -38,6 +38,13 @@
     "PoisonArrow",
   ];
   const cthulhuPoisonComponentIds = new Set(["CthulhuEye", "CthulhuLarva", "CthulhuTentacles"]);
+  const weaponPoisonOrganTraits = data.witchcraftOrgans || {};
+  const weaponPoisonOrganSlotCount = 2;
+  const weaponPoisonCraftRequirements = [
+    "Empty Flask x1",
+    `Witchcraft organs x${weaponPoisonOrganSlotCount}`,
+    "Reagent Powder x5",
+  ];
   const poisonWitchcraftMaterialIds = new Set([
     "ReagentPotion",
     "BattleHungerPotion",
@@ -82,7 +89,7 @@
     sellItems: [],
     sellTab: "calculator",
     cookingTab: "all",
-    poisonTab: "recipes",
+    poisonTab: "weapon",
     poisonMixerItems: [],
     poisonMixerQuery: "",
     goldGoblinMode: "recommended",
@@ -158,17 +165,18 @@
 
     const showTooltip = (event) => {
       const eventTarget = event.target instanceof Element ? event.target : null;
-      const target = eventTarget?.closest("[data-pet-tooltip-html], [data-pet-tooltip], [data-item-id]");
+      const target = eventTarget?.closest("[data-rich-tooltip-html], [data-pet-tooltip-html], [data-pet-tooltip], [data-item-id]");
       if (!target) return;
       if (target === activeTarget && !tooltip.classList.contains("is-hidden")) {
         moveItemTooltip(event, tooltip);
         return;
       }
-      const html = target.dataset.petTooltipHtml || "";
+      const html = target.dataset.richTooltipHtml || target.dataset.petTooltipHtml || "";
       const text = target.dataset.petTooltip || itemTooltipText(target.dataset.itemId);
       if (!html && !text) return;
       activeTarget = target;
-      tooltip.classList.toggle("is-pet-tooltip", Boolean(html));
+      tooltip.classList.toggle("is-rich-tooltip", Boolean(target.dataset.richTooltipHtml));
+      tooltip.classList.toggle("is-pet-tooltip", Boolean(target.dataset.petTooltipHtml));
       if (html) {
         tooltip.innerHTML = html;
       } else {
@@ -199,6 +207,7 @@
       if (event.relatedTarget && activeTarget.contains(event.relatedTarget)) return;
       activeTarget = null;
       tooltip.classList.add("is-hidden");
+      tooltip.classList.remove("is-rich-tooltip");
       tooltip.classList.remove("is-pet-tooltip");
     };
 
@@ -929,73 +938,17 @@
   }
 
   function renderPoisonBrowser() {
-    const allPoisonRecipes = poisonRecipes().sort(sortPoisonRecipes);
+    state.poisonTab = "weapon";
     const weaponRelatedRecipes = weaponPoisonRelatedRecipes().sort(sortPoisonRecipes);
-    const activeRecipes = state.poisonTab === "weapon" ? weaponRelatedRecipes : allPoisonRecipes;
-    const hiddenCount = activeRecipes.filter((recipe) => recipe.hidden).length;
 
-    els.recipeKind.textContent = "Poisons";
-    els.recipeTitle.textContent = state.poisonTab === "weapon" ? "Weapon Poison" : "Poison recipes";
+    els.recipeKind.textContent = "Weapon Poison";
+    els.recipeTitle.textContent = "Weapon Poison";
     els.recipeDetails.innerHTML = "";
-    els.recipeDetails.appendChild(renderPoisonTabControls(allPoisonRecipes.length, weaponPoisonItemIds.filter((id) => items[id]).length));
-
-    if (state.poisonTab === "weapon") {
-      els.recipeDetails.appendChild(pill(`${weaponPoisonItemIds.filter((id) => items[id]).length} weapon poison items`));
-      els.recipeDetails.appendChild(pill(`${weaponRelatedRecipes.length} related recipes`));
-      els.recipeDetails.appendChild(pill("Local item data, related recipes, and charge helpers"));
-      renderWeaponPoisonPanel(weaponRelatedRecipes);
-      renderPoisonInspector("weapon");
-      return;
-    }
-
-    els.recipeDetails.appendChild(pill(`${allPoisonRecipes.length} recipes`));
-    els.recipeDetails.appendChild(pill(`${hiddenCount} hidden included`));
-    els.recipeDetails.appendChild(pill("Witchcraft toxins, poison ammunition, bombs, and anti-poison recipes"));
-
-    const panel = document.createElement("div");
-    panel.className = "station-recipe-browser cooking-recipe-browser potion-recipe-browser poison-recipe-browser";
-
-    const grid = document.createElement("div");
-    grid.className = "station-recipe-grid cooking-recipe-grid potion-recipe-grid poison-recipe-grid";
-    for (const recipe of allPoisonRecipes) {
-      grid.appendChild(renderPoisonRecipeCard(recipe));
-    }
-
-    if (!allPoisonRecipes.length) {
-      const empty = document.createElement("div");
-      empty.className = "empty-note sell-empty";
-      empty.textContent = "No poison recipes were found in the local data.";
-      grid.appendChild(empty);
-    }
-
-    panel.appendChild(grid);
-    els.formulaBoard.innerHTML = "";
-    els.formulaBoard.appendChild(panel);
-    renderPoisonInspector("recipes");
-  }
-
-  function renderPoisonTabControls(recipeCount, weaponCount) {
-    const tabs = document.createElement("div");
-    tabs.className = "sell-tabs cooking-tabs poison-tabs";
-    [
-      ["recipes", `Poison recipes (${recipeCount})`],
-      ["weapon", `Weapon Poison (${weaponCount})`],
-    ].forEach(([id, label]) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "sell-tab cooking-tab poison-tab";
-      button.textContent = label;
-      button.title = `Open ${label}`;
-      button.setAttribute("aria-pressed", state.poisonTab === id ? "true" : "false");
-      button.classList.toggle("is-active", state.poisonTab === id);
-      button.addEventListener("click", () => {
-        state.poisonTab = id;
-        renderPoisonBrowser();
-        renderSearchResults();
-      });
-      tabs.appendChild(button);
-    });
-    return tabs;
+    els.recipeDetails.appendChild(pill(`${weaponPoisonItemIds.filter((id) => items[id]).length} weapon poison items`));
+    els.recipeDetails.appendChild(pill(`${weaponRelatedRecipes.length} related recipes`));
+    els.recipeDetails.appendChild(pill("Two organ slots from local process data"));
+    renderWeaponPoisonPanel(weaponRelatedRecipes);
+    renderPoisonInspector("weapon");
   }
 
   function renderPoisonRecipeCard(recipe) {
@@ -1043,7 +996,7 @@
     note.className = "poison-note";
     note.innerHTML = `
       <strong>Weapon Poison system</strong>
-      <p>Weapon Poison is not exposed as a normal craft recipe in the local craft/process tables. The item and skill data describe it as a special Witchcraft cauldron system: combine organs or components in a witchcrafter's cauldron, then apply the poison to the weapon in hand.</p>
+      <p>The local process data shows Weapon Poison as a Witchcraft cauldron mix with two organ slots: Empty Flask x1, two witchcraft organs, and Reagent Powder x5. The organ records below show the original values extracted from the game files.</p>
     `;
     panel.appendChild(note);
 
@@ -1065,8 +1018,6 @@
       itemGrid.appendChild(renderPoisonItemCard(itemId));
     }
     panel.appendChild(itemGrid);
-
-    panel.appendChild(renderWeaponPoisonComponentList());
 
     const recipeBlock = document.createElement("div");
     recipeBlock.className = "station-recipe-browser poison-related-recipes";
@@ -1107,12 +1058,17 @@
       {
         title: "How to make it",
         value: "Use the Witchcrafter's cauldron",
-        detail: "Local item text says organs/components are used for crafting weapon poisons in a witchcrafter's cauldron.",
+        detail: "The extracted process is a cauldron mix, not a normal craft recipe in the public recipe list.",
       },
       {
-        title: "Required container",
-        value: "Empty Flask",
-        detail: itemDescription("EmptyFlask") || "A flask is required by the local item text for weapon poison and potions.",
+        title: "Required materials",
+        value: "Empty Flask + 2 organs + Reagent Powder x5",
+        detail: itemDescription("EmptyFlask") || "The flask is consumed by the weapon poison process.",
+      },
+      {
+        title: "Organ slots",
+        value: `${weaponPoisonOrganSlotCount} organs per mix`,
+        detail: "The local process has two separate organ slots, so this planner limits each preview to two selected organs.",
       },
       {
         title: "Witchcraft bonus",
@@ -1125,19 +1081,14 @@
         detail: "Corn pie increases the number of charges when applying weapon poison.",
       },
       {
-        title: "Known charge example",
-        value: "Cthulhu organs: 220 charges",
-        detail: "Latest official balance note found: Cthulhu organ weapon poison charges were reduced from 660 to 220.",
+        title: "Organ data",
+        value: `${Object.keys(weaponPoisonOrganTraits).length} organs extracted`,
+        detail: "Required Witchcraft, charges, target type, and trait values come from WTWitchcraftOrgan records in the local files.",
       },
       {
-        title: "Known effects",
-        value: "Life-stealing and chilling",
-        detail: "Official notes describe weapon poison as gaining different properties/effects from organs; life-stealing absorbs 10% of inflicted damage up to its value, and chilling deals gradual damage with slowing.",
-      },
-      {
-        title: "Missing from local data",
-        value: "Base charges and poison damage per organ",
-        detail: "The extracted craft, process, item, and effect files do not include a complete per-organ charge or damage table.",
+        title: "Result preview",
+        value: "Original organ values",
+        detail: "The planner sums the selected organ records and leaves server-side roll details unguessed.",
       },
     ];
 
@@ -1162,21 +1113,22 @@
 
     const componentIds = weaponPoisonComponentItemIds();
     const filteredIds = filterWeaponPoisonMixerItems(componentIds);
-    const selectedIds = state.poisonMixerItems.filter((itemId) => items[itemId]);
+    const selectedIds = normalizeWeaponPoisonMixerSelection(state.poisonMixerItems);
+    state.poisonMixerItems = selectedIds;
 
     const heading = document.createElement("div");
     heading.className = "poison-section-title";
     heading.innerHTML = `
       <strong>Organ mixer</strong>
-      <span>${selectedIds.length} selected</span>
+      <span>${selectedIds.length}/${weaponPoisonOrganSlotCount} selected</span>
     `;
     section.appendChild(heading);
 
     const intro = document.createElement("div");
     intro.className = "poison-note poison-compact-note";
     intro.innerHTML = `
-      <strong>Choose organs to preview the poison result</strong>
-      <p>This planner uses confirmed local item text and official notes. If a mix has no confirmed rule in the current dataset, it will be marked as unverified instead of showing a guessed effect.</p>
+      <strong>Choose exactly two organs to preview the poison result</strong>
+      <p>This planner reads the original WTWitchcraftOrgan records from the local game files. The cauldron process has two organ slots, so extra selections are blocked.</p>
     `;
     section.appendChild(intro);
 
@@ -1209,6 +1161,7 @@
     section.appendChild(controls);
 
     section.appendChild(renderWeaponPoisonMixerSelection(selectedIds));
+    section.appendChild(renderWeaponPoisonCauldronRecipe(selectedIds));
     section.appendChild(renderWeaponPoisonMixerResult(selectedIds));
 
     const pickerTitle = document.createElement("div");
@@ -1221,7 +1174,7 @@
 
     const picker = document.createElement("div");
     picker.className = "poison-mixer-picker";
-    for (const itemId of filteredIds) picker.appendChild(renderWeaponPoisonMixerChoice(itemId, selectedIds.includes(itemId)));
+    for (const itemId of filteredIds) picker.appendChild(renderWeaponPoisonMixerChoice(itemId, selectedIds));
     if (!filteredIds.length) {
       const empty = document.createElement("div");
       empty.className = "empty-note sell-empty";
@@ -1230,6 +1183,21 @@
     }
     section.appendChild(picker);
     return section;
+  }
+
+  function normalizeWeaponPoisonMixerSelection(itemIds) {
+    return (itemIds || [])
+      .filter((itemId) => items[itemId])
+      .slice(0, weaponPoisonOrganSlotCount);
+  }
+
+  function selectedOrganCount(selectedIds, itemId) {
+    return selectedIds.filter((selectedId) => selectedId === itemId).length;
+  }
+
+  function removeSelectedOrganAt(index) {
+    state.poisonMixerItems = state.poisonMixerItems.filter((_, selectedIndex) => selectedIndex !== index);
+    renderPoisonBrowser();
   }
 
   function filterWeaponPoisonMixerItems(componentIds) {
@@ -1242,6 +1210,7 @@
         itemName(itemId),
         item.description,
         poisonItemRole(itemId),
+        weaponPoisonOrganTraitSearchText(itemId),
         weaponPoisonMixerClues([itemId]).map((clue) => clue.effect).join(" "),
       ].some((value) => normalize(value).includes(query));
     });
@@ -1251,27 +1220,111 @@
     const wrap = document.createElement("div");
     wrap.className = "poison-mixer-selection";
     if (!selectedIds.length) {
-      wrap.innerHTML = `<span class="poison-mixer-empty">No organs selected. Choose one or more organs below.</span>`;
+      wrap.innerHTML = `<span class="poison-mixer-empty">No organs selected. Choose two organs below.</span>`;
       return wrap;
     }
 
-    for (const itemId of selectedIds) {
+    selectedIds.forEach((itemId, index) => {
       const chip = document.createElement("button");
       chip.type = "button";
       chip.className = "poison-mixer-chip";
-      chip.title = `Remove ${itemName(itemId)}`;
-      attachItemTooltip(chip, itemId);
-      chip.appendChild(renderIcon(itemId));
+      chip.title = `Remove ${itemName(itemId)} from slot ${index + 1}`;
+      attachWeaponPoisonOrganTooltip(chip, itemId);
+      chip.appendChild(renderUntooltippedIcon(itemId));
       const label = document.createElement("span");
-      label.textContent = itemName(itemId);
+      label.textContent = `${index + 1}. ${itemName(itemId)}`;
       chip.appendChild(label);
       chip.addEventListener("click", () => {
-        state.poisonMixerItems = state.poisonMixerItems.filter((id) => id !== itemId);
-        renderPoisonBrowser();
+        removeSelectedOrganAt(index);
       });
       wrap.appendChild(chip);
-    }
+    });
     return wrap;
+  }
+
+  function renderWeaponPoisonCauldronRecipe(selectedIds) {
+    const result = evaluateWeaponPoisonMix(selectedIds);
+    const wrap = document.createElement("div");
+    wrap.className = "poison-cauldron-recipe";
+
+    wrap.appendChild(renderPoisonRecipeFixedSlot("EmptyFlask", "Bottle", "x1"));
+    wrap.appendChild(renderPoisonRecipeOperator("+"));
+    wrap.appendChild(renderPoisonRecipeOrganSlot(selectedIds, 0));
+    wrap.appendChild(renderPoisonRecipeOperator("+"));
+    wrap.appendChild(renderPoisonRecipeOrganSlot(selectedIds, 1));
+    wrap.appendChild(renderPoisonRecipeOperator("+"));
+    wrap.appendChild(renderPoisonRecipeFixedSlot("ReagentPowder", "Reagent powder", "x5"));
+    wrap.appendChild(renderPoisonRecipeOperator("→", "arrow"));
+    wrap.appendChild(renderPoisonRecipeResultSlot(result));
+    return wrap;
+  }
+
+  function renderPoisonRecipeFixedSlot(itemId, label, amountLabel) {
+    const slot = document.createElement("button");
+    slot.type = "button";
+    slot.className = "poison-recipe-slot is-fixed";
+    attachItemTooltip(slot, itemId);
+    slot.appendChild(renderUntooltippedIcon(itemId));
+    const text = document.createElement("span");
+    text.innerHTML = `
+      <strong>${escapeHtml(label || itemName(itemId))}</strong>
+      <small>${escapeHtml(amountLabel || "")}</small>
+    `;
+    slot.appendChild(text);
+    slot.addEventListener("click", () => navigate({ type: "item", id: itemId }));
+    return slot;
+  }
+
+  function renderPoisonRecipeOrganSlot(selectedIds, index) {
+    const itemId = selectedIds[index];
+    const slot = document.createElement("button");
+    slot.type = "button";
+    slot.className = "poison-recipe-slot poison-organ-slot";
+    slot.classList.toggle("is-empty", !itemId);
+    if (itemId) {
+      attachWeaponPoisonOrganTooltip(slot, itemId);
+      slot.appendChild(renderUntooltippedIcon(itemId));
+      const text = document.createElement("span");
+      text.innerHTML = `
+        <strong>${escapeHtml(itemName(itemId))}</strong>
+        <small>Organ slot ${index + 1} · click to remove</small>
+      `;
+      slot.appendChild(text);
+      slot.addEventListener("click", () => removeSelectedOrganAt(index));
+    } else {
+      slot.innerHTML = `
+        <span class="poison-empty-icon" aria-hidden="true"></span>
+        <span>
+          <strong>Organ slot ${index + 1}</strong>
+          <small>Choose an organ below</small>
+        </span>
+      `;
+    }
+    return slot;
+  }
+
+  function renderPoisonRecipeResultSlot(result) {
+    const slot = document.createElement("button");
+    slot.type = "button";
+    slot.className = "poison-recipe-slot poison-result-slot";
+    attachItemTooltip(slot, "WeaponPoison");
+    slot.appendChild(renderUntooltippedIcon("WeaponPoison"));
+    const text = document.createElement("span");
+    const summary = result.effects.length ? result.effects.slice(0, 3).join(" · ") : result.title;
+    text.innerHTML = `
+      <strong>Weapon Poison</strong>
+      <small>${escapeHtml(summary)}</small>
+    `;
+    slot.appendChild(text);
+    slot.addEventListener("click", () => navigate({ type: "item", id: "WeaponPoison" }));
+    return slot;
+  }
+
+  function renderPoisonRecipeOperator(symbol, variant) {
+    const op = document.createElement("span");
+    op.className = `poison-recipe-operator${variant ? ` is-${variant}` : ""}`;
+    op.textContent = symbol;
+    return op;
   }
 
   function renderWeaponPoisonMixerResult(selectedIds) {
@@ -1286,6 +1339,17 @@
     const notes = result.notes.length
       ? `<ul>${result.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}</ul>`
       : "";
+    const traits = result.traits?.length
+      ? `<div class="poison-mixer-traits">${result.traits.map((row) => `
+          <div class="poison-mixer-trait">
+            <small>${escapeHtml(row.label)}</small>
+            <strong>${escapeHtml(row.value)}</strong>
+          </div>
+        `).join("")}</div>`
+      : "";
+    const requirements = result.requirements?.length
+      ? `<div class="poison-mixer-requirements">${result.requirements.map((row) => `<span>${escapeHtml(row)}</span>`).join("")}</div>`
+      : "";
 
     box.innerHTML = `
       <div class="poison-mixer-result-head">
@@ -1293,39 +1357,141 @@
         <strong>${escapeHtml(result.title)}</strong>
       </div>
       <div class="poison-mixer-effects">${effects}</div>
+      ${requirements}
+      ${traits}
       ${result.charges ? `<div class="poison-mixer-charge">${escapeHtml(result.charges)}</div>` : ""}
       ${notes}
     `;
     return box;
   }
 
-  function renderWeaponPoisonMixerChoice(itemId, selected) {
+  function renderWeaponPoisonMixerChoice(itemId, selectedIds) {
+    const selectedCount = selectedOrganCount(selectedIds, itemId);
+    const selected = selectedCount > 0;
+    const mixFull = selectedIds.length >= weaponPoisonOrganSlotCount;
+    const canAdd = selectedIds.length < weaponPoisonOrganSlotCount;
     const button = document.createElement("button");
     button.type = "button";
     button.className = "poison-mixer-choice";
     button.classList.toggle("is-selected", selected);
-    attachItemTooltip(button, itemId);
-    button.appendChild(renderIcon(itemId));
+    button.classList.toggle("is-locked", !canAdd);
+    if (!canAdd) button.setAttribute("aria-disabled", "true");
+    attachWeaponPoisonOrganTooltip(button, itemId);
+    button.appendChild(renderUntooltippedIcon(itemId));
 
     const body = document.createElement("span");
     body.className = "poison-mixer-choice-body";
+    const organData = weaponPoisonOrganTraits[itemId];
     const clues = weaponPoisonMixerClues([itemId]);
     const sourceCount = mergedDropSources(itemId).length;
+    const summary = organData
+      ? `Witchcraft ${organData.requiredWitchcraft} · ${organData.charges} charges · ${organData.affects || "All"} · ${(organData.traits || []).map((trait) => `${trait.label} ${trait.value}`).join(" · ")}`
+      : clues.map((clue) => clue.effect).join(" · ") || poisonItemRole(itemId);
     body.innerHTML = `
       <strong>${escapeHtml(itemName(itemId))}</strong>
-      <small>${escapeHtml(clues.map((clue) => clue.effect).join(" · ") || poisonItemRole(itemId))}</small>
-      <em>${sourceCount ? `${sourceCount} sources` : "source unknown"}</em>
+      <small>${escapeHtml(summary)}</small>
+      <em>${selected ? `selected x${selectedCount}${mixFull ? " · two slots filled" : " · click to add again"}` : mixFull ? "two organ slots filled" : sourceCount ? `${sourceCount} sources` : "source unknown"}</em>
     `;
     button.appendChild(body);
     button.addEventListener("click", () => {
-      if (selected) {
-        state.poisonMixerItems = state.poisonMixerItems.filter((id) => id !== itemId);
-      } else {
-        state.poisonMixerItems = [...state.poisonMixerItems, itemId];
+      if (selectedIds.length >= weaponPoisonOrganSlotCount) {
+        return;
       }
+      state.poisonMixerItems = [...state.poisonMixerItems, itemId];
       renderPoisonBrowser();
     });
     return button;
+  }
+
+  function countSelectedItems(itemIds) {
+    const counts = new Map();
+    for (const itemId of itemIds) counts.set(itemId, (counts.get(itemId) || 0) + 1);
+    return counts;
+  }
+
+  function selectedOrganCountText(itemIds) {
+    return [...countSelectedItems(itemIds).entries()]
+      .map(([itemId, count]) => `${itemName(itemId)}${count > 1 ? ` x${count}` : ""}`)
+      .join(", ");
+  }
+
+  function aggregateWitchcraftOrganTraits(confirmed) {
+    const groups = new Map();
+    for (const { data } of confirmed) {
+      for (const trait of data.traits || []) {
+        const parsed = parseStackableTraitValue(trait.value);
+        const key = parsed
+          ? `${trait.label}|${parsed.prefix}|${parsed.unit}|${parsed.suffix}`
+          : `${trait.label}|${trait.value}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            label: trait.label,
+            values: [],
+            parsed,
+            total: 0,
+            count: 0,
+          });
+        }
+        const group = groups.get(key);
+        if (parsed && group.parsed) {
+          group.total += parsed.amount;
+          group.count += 1;
+          group.parsed.decimals = Math.max(group.parsed.decimals, parsed.decimals);
+        } else {
+          group.values.push(trait.value);
+        }
+      }
+    }
+
+    return [...groups.values()].map((group) => {
+      if (group.parsed) {
+        return {
+          label: group.label,
+          value: formatStackedTraitValue(group.parsed, group.total),
+        };
+      }
+      return {
+        label: group.label,
+        value: [...new Set(group.values)].join(" + "),
+      };
+    });
+  }
+
+  function parseStackableTraitValue(value) {
+    const text = String(value || "").trim().replace(/\s+/g, " ");
+    const multiplier = text.match(/^x\s*([+-]?\d+(?:\.\d+)?)\s*(.*)$/i);
+    if (multiplier) {
+      return {
+        prefix: "x",
+        amount: Number(multiplier[1]),
+        unit: "",
+        suffix: multiplier[2].trim(),
+        decimals: decimalPlaces(multiplier[1]),
+      };
+    }
+    const numeric = text.match(/^([+-]?)(\d+(?:\.\d+)?)\s*(%)?\s*(.*)$/);
+    if (!numeric) return null;
+    return {
+      prefix: numeric[1] || "",
+      amount: Number(numeric[2]),
+      unit: numeric[3] || "",
+      suffix: numeric[4].trim(),
+      decimals: decimalPlaces(numeric[2]),
+    };
+  }
+
+  function decimalPlaces(value) {
+    const match = String(value).match(/\.(\d+)/);
+    return match ? match[1].length : 0;
+  }
+
+  function formatStackedTraitValue(parsed, total) {
+    const decimals = parsed.decimals ? Math.min(parsed.decimals, 2) : 0;
+    const rounded = Number(total.toFixed(decimals || 2));
+    const number = decimals ? rounded.toFixed(decimals).replace(/\.?0+$/, "") : String(Math.round(rounded));
+    const suffix = parsed.suffix ? ` ${parsed.suffix}` : "";
+    if (parsed.prefix === "x") return `x${number}${suffix}`;
+    return `${parsed.prefix}${number}${parsed.unit}${suffix}`;
   }
 
   function evaluateWeaponPoisonMix(selectedIds) {
@@ -1333,25 +1499,71 @@
       return {
         status: "empty",
         statusLabel: "No mix",
-        title: "Select organs to preview a result",
+        title: "Select two organs to preview a result",
         effects: [],
         charges: "",
-        notes: ["The planner will show confirmed effects when the selected organs match a known rule."],
+        requirements: weaponPoisonCraftRequirements,
+        traits: [],
+        notes: ["The local Weapon Poison process uses exactly two organ slots."],
       };
     }
 
+    const slotReady = selectedIds.length === weaponPoisonOrganSlotCount;
+    const missingSlots = Math.max(0, weaponPoisonOrganSlotCount - selectedIds.length);
+    const slotNote = slotReady
+      ? "Both organ slots are filled."
+      : `Select ${missingSlots} more organ${missingSlots === 1 ? "" : "s"} to match the cauldron process.`;
     const allCthulhu = selectedIds.every((itemId) => cthulhuPoisonComponentIds.has(itemId));
     const hasCthulhu = selectedIds.some((itemId) => cthulhuPoisonComponentIds.has(itemId));
+    const confirmed = selectedIds
+      .map((itemId) => ({ itemId, data: weaponPoisonOrganTraits[itemId] }))
+      .filter((row) => row.data);
+    const unknownSelected = selectedIds.filter((itemId) => !weaponPoisonOrganTraits[itemId] && !cthulhuPoisonComponentIds.has(itemId));
     const clues = weaponPoisonMixerClues(selectedIds);
+
+    if (confirmed.length) {
+      const allConfirmed = confirmed.length === selectedIds.length;
+      const requirementRows = [
+        selectedOrganCountText(selectedIds) ? `Selected organs: ${selectedOrganCountText(selectedIds)}` : "",
+        `Required Witchcraft: ${Math.max(...confirmed.map(({ data }) => Number(data.requiredWitchcraft || 0)))}`,
+        ...confirmed.flatMap(({ data }) => data.success ? [`Success ${data.success}`] : []),
+      ].filter(Boolean);
+      const affects = [...new Set(confirmed.map(({ data }) => data.affects).filter(Boolean))];
+      const traitRows = [
+        affects.length ? { label: "Affects on", value: affects.join(" · ") } : null,
+        ...aggregateWitchcraftOrganTraits(confirmed),
+      ].filter(Boolean);
+      const chargeTotal = confirmed.reduce((sum, row) => sum + Number(row.data.charges || 0), 0);
+      return {
+        status: allConfirmed && slotReady ? "known" : "partial",
+        statusLabel: allConfirmed ? "Original organ data" : "Partially original data",
+        title: slotReady
+          ? allConfirmed ? "Weapon poison contribution preview" : "Mixed original and unverified organs"
+          : "One organ selected, choose the second slot",
+        effects: [...new Set(traitRows.filter((row) => row.label !== "Affects on").map((row) => row.label))],
+        charges: `${slotReady ? "Selected organ charge total" : "Selected organ charge so far"}: ${chargeTotal}.`,
+        requirements: [...weaponPoisonCraftRequirements, ...new Set(requirementRows)],
+        traits: traitRows,
+        notes: [
+          slotNote,
+          "Values are extracted from WTWitchcraftOrgan in the local game resources.",
+          ...(unknownSelected.length ? [`Unverified selected organs: ${unknownSelected.map(itemName).join(", ")}.`] : []),
+          ...(allConfirmed ? [] : ["Only the original organ records above have exact numeric values right now."]),
+        ],
+      };
+    }
 
     if (allCthulhu) {
       return {
-        status: "known",
+        status: slotReady ? "known" : "partial",
         statusLabel: "Known charge group",
-        title: "Cthulhu organ weapon poison",
+        title: slotReady ? "Cthulhu organ weapon poison" : "One Cthulhu organ selected",
         effects: ["Weapon poison", "Cthulhu organ group"],
         charges: "Base charges: 220 before Witchcraft level and Corn pie bonuses.",
+        requirements: weaponPoisonCraftRequirements,
+        traits: [],
         notes: [
+          slotNote,
           "This is the only organ group with a confirmed charge value found so far.",
           "Exact poison damage or secondary effect is not exposed in the current local files.",
         ],
@@ -1365,7 +1577,10 @@
         title: "Cthulhu organ mixed with other components",
         effects: ["Weapon poison", ...clues.map((clue) => clue.effect)],
         charges: "Cthulhu-only poison is confirmed at 220 base charges; mixed-organ charge output is not confirmed.",
+        requirements: weaponPoisonCraftRequirements,
+        traits: [],
         notes: [
+          slotNote,
           "The current dataset does not confirm how Cthulhu organs behave when mixed with non-Cthulhu organs.",
           "Use this as a verification target inside the in-game Witchcraft window.",
         ],
@@ -1379,7 +1594,10 @@
         title: "Unverified organ effect clues",
         effects: clues.map((clue) => clue.effect),
         charges: "",
+        requirements: weaponPoisonCraftRequirements,
+        traits: [],
         notes: [
+          slotNote,
           "These clues come from organ names and official examples of possible poison effects.",
           "The exact mix result is not confirmed in the extracted local data.",
         ],
@@ -1392,11 +1610,28 @@
       title: "No confirmed effect mapping found",
       effects: ["Weapon poison component"],
       charges: "",
+      requirements: weaponPoisonCraftRequirements,
+      traits: [],
       notes: [
+        slotNote,
         "These organs are marked as valid cauldron components, but their output effect is not present in the current files.",
         "A screenshot from the in-game Witchcraft organ journal would let us fill this rule accurately.",
       ],
     };
+  }
+
+  function weaponPoisonOrganTraitSearchText(itemId) {
+    const data = weaponPoisonOrganTraits[itemId];
+    if (!data) return "";
+    return [
+      data.requiredWitchcraft,
+      itemName(data.requiredItem),
+      data.success,
+      data.affects,
+      data.charges,
+      ...(data.traits || []).flatMap((trait) => [trait.label, trait.value]),
+      data.note,
+    ].join(" ");
   }
 
   function weaponPoisonMixerClues(itemIds) {
@@ -1412,34 +1647,6 @@
     return clues;
   }
 
-  function renderWeaponPoisonComponentList() {
-    const section = document.createElement("div");
-    section.className = "poison-components";
-
-    const componentIds = weaponPoisonComponentItemIds();
-    const heading = document.createElement("div");
-    heading.className = "poison-section-title";
-    heading.innerHTML = `
-      <strong>Cauldron organ/component candidates</strong>
-      <span>${componentIds.length} items</span>
-    `;
-    section.appendChild(heading);
-
-    const note = document.createElement("div");
-    note.className = "poison-note poison-compact-note";
-    note.innerHTML = `
-      <strong>About the numbers</strong>
-      <p>These items are marked in local item descriptions as weapon poison cauldron components. Exact charge and poison strength values are only shown when a confirmed source exists; otherwise the card keeps the item as a candidate without inventing a number.</p>
-    `;
-    section.appendChild(note);
-
-    const grid = document.createElement("div");
-    grid.className = "poison-item-grid poison-component-grid";
-    for (const itemId of componentIds) grid.appendChild(renderPoisonItemCard(itemId));
-    section.appendChild(grid);
-    return section;
-  }
-
   function renderPoisonItemCard(itemId) {
     const card = document.createElement("button");
     card.type = "button";
@@ -1450,7 +1657,7 @@
     const body = document.createElement("span");
     body.className = "poison-item-body";
     const description = itemDescriptionWithFallback(itemId);
-    const stats = compactItemDetailText(itemId, 4);
+    const stats = compactWitchcraftOrganText(itemId) || compactItemDetailText(itemId, 4);
     const produced = recipesByResult.get(itemId)?.length || 0;
     const used = usageByItem.get(itemId)?.length || 0;
     const sources = mergedDropSources(itemId).length;
@@ -3730,6 +3937,8 @@
     const panels = document.createElement("div");
     panels.className = "inspector-panels";
     panels.appendChild(itemEconomyBlock("Item economy", economy, itemId));
+    const organBlock = witchcraftOrganBlock(itemId);
+    if (organBlock) panels.appendChild(organBlock);
     panels.appendChild(shopSaleListBlock("Sold by shops", soldBy));
     panels.appendChild(recipeListBlock("Recipes that create this item", produced, { showIcons: true }));
     panels.appendChild(stationListBlock("Crafting stations", craftingStationsForRecipes(produced)));
@@ -3747,6 +3956,35 @@
       block.appendChild(note);
       els.inspectorContent.appendChild(block);
     }
+  }
+
+  function witchcraftOrganBlock(itemId) {
+    const organ = weaponPoisonOrganTraits[itemId];
+    if (!organ) return null;
+
+    const block = sectionBlock("Weapon poison traits", 1);
+    const card = document.createElement("div");
+    card.className = "organ-trait-card";
+    const flags = [
+      organ.hiddenInJournal ? "hidden journal" : "",
+      organ.lootOnly ? "loot only" : "",
+    ].filter(Boolean);
+    card.innerHTML = `
+      <div class="organ-trait-head">
+        <strong>${escapeHtml(itemName(itemId))}</strong>
+        <small>${escapeHtml(organ.source || "WTWitchcraftOrgan")}</small>
+      </div>
+      <dl>
+        <div><dt>Required Witchcraft</dt><dd>${escapeHtml(organ.requiredWitchcraft)}</dd></div>
+        ${organ.requiredItem ? `<div><dt>Transform reagent</dt><dd>${escapeHtml(itemName(organ.requiredItem))}</dd></div>` : ""}
+        <div><dt>Affects on</dt><dd>${escapeHtml(organ.affects || "All")}</dd></div>
+        <div><dt>Charges</dt><dd>${escapeHtml(organ.charges)}</dd></div>
+        ${(organ.traits || []).map((trait) => `<div><dt>${escapeHtml(trait.label)}</dt><dd>${escapeHtml(trait.value)}</dd></div>`).join("")}
+      </dl>
+      ${flags.length ? `<p>${escapeHtml(flags.join(" · "))}</p>` : ""}
+    `;
+    block.appendChild(card);
+    return block;
   }
 
   function itemEconomyBlock(title, economy, itemId) {
@@ -5017,20 +5255,34 @@
   }
 
   function weaponPoisonComponentItemIds() {
-    return Object.entries(items)
+    const organIds = Object.keys(weaponPoisonOrganTraits);
+    const descriptionIds = Object.entries(items)
       .filter(([, item]) => /crafting weapon poisons? in a witchcrafter/i.test(item.description || ""))
-      .map(([itemId]) => itemId)
+      .map(([itemId]) => itemId);
+    return [...new Set([...organIds, ...descriptionIds])]
       .sort((a, b) => {
-        const aCthulhu = Number(cthulhuPoisonComponentIds.has(a));
-        const bCthulhu = Number(cthulhuPoisonComponentIds.has(b));
-        if (aCthulhu !== bCthulhu) return bCthulhu - aCthulhu;
+        const levelDelta = Number(weaponPoisonOrganTraits[a]?.requiredWitchcraft || 999) - Number(weaponPoisonOrganTraits[b]?.requiredWitchcraft || 999);
+        if (levelDelta) return levelDelta;
         const rarityDelta = Number(items[b]?.baseRarity || 0) - Number(items[a]?.baseRarity || 0);
         if (rarityDelta) return rarityDelta;
         return itemName(a).localeCompare(itemName(b));
       });
   }
 
+  function compactWitchcraftOrganText(itemId) {
+    const organ = weaponPoisonOrganTraits[itemId];
+    if (!organ) return "";
+    const parts = [
+      `Witchcraft ${organ.requiredWitchcraft}`,
+      `${organ.charges} charges`,
+      organ.affects ? `affects ${organ.affects}` : "",
+      ...(organ.traits || []).slice(0, 4).map((trait) => `${trait.label}: ${trait.value}`),
+    ].filter(Boolean);
+    return parts.join(" · ");
+  }
+
   function poisonItemRole(itemId) {
+    if (weaponPoisonOrganTraits[itemId]) return "Original WTWitchcraftOrgan weapon-poison traits";
     if (cthulhuPoisonComponentIds.has(itemId)) return "Cthulhu organ component · known charge group: 220";
     if (/crafting weapon poisons? in a witchcrafter/i.test(itemDescription(itemId))) {
       return "Organ/component for cauldron weapon poison";
@@ -5245,6 +5497,60 @@
     if (description) lines.push(description);
     lines.push(...statLines);
     return lines.length > 1 ? lines.join("\n") : "";
+  }
+
+  function weaponPoisonOrganTooltipHtml(itemId) {
+    const organ = weaponPoisonOrganTraits[itemId];
+    if (!organ) return "";
+    const rows = [
+      ["Required Witchcraft", organ.requiredWitchcraft],
+      ["Charges", organ.charges],
+      ["Affects on", organ.affects || "All"],
+      ...(organ.traits || []).map((trait) => [trait.label, trait.value]),
+    ];
+    return `
+      <div class="organ-tooltip-card">
+        <div class="organ-tooltip-head">
+          ${itemIconHtml(itemId)}
+          <span>
+            <strong>${escapeHtml(itemName(itemId))}</strong>
+            <small>WTWitchcraftOrgan</small>
+          </span>
+        </div>
+        <dl>
+          ${rows.map(([label, value]) => `
+            <div>
+              <dt>${escapeHtml(label)}</dt>
+              <dd>${escapeHtml(value)}</dd>
+            </div>
+          `).join("")}
+        </dl>
+      </div>
+    `;
+  }
+
+  function itemIconHtml(itemId) {
+    const item = itemRecord(itemId);
+    const wikiEntry = wikiEntryByItemId.get(itemId);
+    const iconSrc = item.icon || wikiEntry?.image || "";
+    if (iconSrc) return `<span class="item-icon"><img src="${escapeHtml(iconSrc)}" alt="" aria-hidden="true"></span>`;
+    return `<span class="item-icon"><span class="fallback-icon">${escapeHtml(initials(item.name || item.id))}</span></span>`;
+  }
+
+  function attachWeaponPoisonOrganTooltip(element, itemId) {
+    const html = weaponPoisonOrganTooltipHtml(itemId);
+    if (!html) return attachItemTooltip(element, itemId);
+    element.dataset.richTooltipHtml = html;
+    element.removeAttribute("title");
+    element.setAttribute("aria-label", `${itemName(itemId)} weapon poison traits`);
+    return element;
+  }
+
+  function renderUntooltippedIcon(itemId, size) {
+    const icon = renderIcon(itemId, size);
+    icon.removeAttribute("data-item-id");
+    icon.removeAttribute("aria-label");
+    return icon;
   }
 
   function attachItemTooltip(element, itemId) {
