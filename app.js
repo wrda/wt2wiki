@@ -45,6 +45,19 @@
     `Witchcraft organs x${weaponPoisonOrganSlotCount}`,
     "Reagent Powder x5",
   ];
+  const sacrificialOrganRules = data.sacrificialOrganRules || [];
+  const sacrificialOrganRelatedItemIds = [
+    "SacrificialOrgan",
+    "WitchcraftCauldron",
+    "WitchcraftPot",
+    "InfectedRawHide",
+    "ReagentPowder",
+  ];
+  const sacrificialOrganCraftRequirements = [
+    "Witchcraft organ x1",
+    "Infected raw hide x5",
+    "Reagent Powder x10",
+  ];
   const poisonWitchcraftMaterialIds = new Set([
     "ReagentPotion",
     "BattleHungerPotion",
@@ -92,6 +105,8 @@
     poisonTab: "weapon",
     poisonMixerItems: [],
     poisonMixerQuery: "",
+    sacrificialOrganItem: "",
+    sacrificialOrganQuery: "",
     goldGoblinMode: "recommended",
   };
 
@@ -253,6 +268,10 @@
       navigate({ type: "poison" });
       return;
     }
+    if (state.kind === "sacrifice") {
+      navigate({ type: "sacrifice" });
+      return;
+    }
     if (state.kind === "all") {
       navigate({ type: "home" });
       return;
@@ -301,6 +320,8 @@
       return item ? { type: "item", id: item.id } : null;
     }
 
+    if (filter === "sacrifice") return { type: "sacrifice" };
+
     if (recipeFilterTypes().has(filter)) {
       if (filter === "cooking") return { type: "cooking" };
       if (filter === "potion") return { type: "potion" };
@@ -329,7 +350,14 @@
       renderSellSearchResults();
       return;
     }
-
+    if (state.kind === "poison") {
+      renderWeaponPoisonSearchResults();
+      return;
+    }
+    if (state.kind === "sacrifice") {
+      renderSacrificialOrganSearchResults();
+      return;
+    }
     const query = normalize(state.query);
     const filter = state.kind || "all";
     const includeItems = filter === "all" || filter === "items";
@@ -414,6 +442,112 @@
       empty.textContent = "No sellable items matched. Try Small hides, fish, ore, leather, or a crafted item name.";
       els.resultList.appendChild(empty);
     }
+  }
+
+  function renderWeaponPoisonSearchResults() {
+    const query = normalize(state.query);
+    const ids = [...new Set([...weaponPoisonRelatedItemIds, ...weaponPoisonComponentItemIds()])]
+      .filter((itemId) => items[itemId])
+      .filter((itemId) => !query || weaponPoisonSearchText(itemId).includes(query));
+    els.resultList.innerHTML = "";
+    els.resultMeta.textContent = `${ids.length} weapon poison items`;
+    for (const itemId of ids.slice(0, 180)) {
+      els.resultList.appendChild(renderCombinationItemRow(itemId, "weapon"));
+    }
+    if (!ids.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note";
+      empty.textContent = "No Weapon Poison item matched. Try Dragon eye, Scorpion tail, or Reagent powder.";
+      els.resultList.appendChild(empty);
+    }
+  }
+
+  function renderSacrificialOrganSearchResults() {
+    const query = normalize(state.query);
+    const ids = [...new Set([...sacrificialOrganRelatedItemIds, ...sacrificialOrganCandidateItemIds()])]
+      .filter((itemId) => items[itemId])
+      .filter((itemId) => !query || combinationSearchText(itemId).includes(query));
+    els.resultList.innerHTML = "";
+    els.resultMeta.textContent = `${ids.length} Sacrificial Organ items`;
+    for (const itemId of ids.slice(0, 180)) {
+      els.resultList.appendChild(renderCombinationItemRow(itemId, "sacrifice"));
+    }
+    if (!ids.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note";
+      empty.textContent = "No Sacrificial Organ item matched. Try Dragon eye, Bear paw, or Reagent powder.";
+      els.resultList.appendChild(empty);
+    }
+  }
+
+  function weaponPoisonSearchText(itemId) {
+    return normalize([
+      itemId,
+      itemName(itemId),
+      itemDescription(itemId),
+      poisonItemRole(itemId),
+      weaponPoisonOrganTraitSearchText(itemId),
+    ].join(" "));
+  }
+
+  function combinationSearchText(itemId) {
+    const sacrificialRule = sacrificialRuleForOrgan(itemId);
+    return normalize([
+      weaponPoisonSearchText(itemId),
+      sacrificialRule?.entityName,
+      sacrificialRule?.entityId,
+      compactWitchcraftOrganText(itemId),
+    ].join(" "));
+  }
+
+  function renderCombinationItemRow(itemId, mode) {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "result-row";
+    if (weaponPoisonOrganTraits[itemId]) {
+      attachWeaponPoisonOrganTooltip(row, itemId);
+    } else {
+      attachItemTooltip(row, itemId);
+    }
+    row.appendChild(renderUntooltippedIcon(itemId));
+
+    const body = document.createElement("span");
+    const role = mode === "sacrifice"
+      ? sacrificialCombinationSubtitle(itemId)
+      : weaponPoisonCombinationSubtitle(itemId);
+    body.innerHTML = `
+      <span class="result-title" dir="auto">${escapeHtml(itemName(itemId))}</span>
+      <span class="result-subtitle">${escapeHtml(role)}</span>
+    `;
+    row.appendChild(body);
+    row.addEventListener("click", () => {
+      if (mode === "weapon" && weaponPoisonOrganTraits[itemId]) {
+        state.poisonMixerItems = normalizeWeaponPoisonMixerSelection([...state.poisonMixerItems, itemId]);
+        renderPoisonBrowser();
+      } else if (mode === "sacrifice" && weaponPoisonOrganTraits[itemId]) {
+        state.sacrificialOrganItem = itemId;
+        state.kind = "sacrifice";
+        state.wikiKind = "all";
+        syncUnifiedFilterButtons();
+        renderSacrificialOrganBrowser();
+      }
+      renderItemInspector(itemId);
+      renderSearchResults();
+    });
+    return row;
+  }
+
+  function weaponPoisonCombinationSubtitle(itemId) {
+    if (weaponPoisonOrganTraits[itemId]) return `Weapon Poison organ · ${compactWitchcraftOrganText(itemId)}`;
+    return poisonItemRole(itemId);
+  }
+
+  function sacrificialCombinationSubtitle(itemId) {
+    if (weaponPoisonOrganTraits[itemId]) {
+      const rule = sacrificialRuleForOrgan(itemId);
+      return `Sacrificial Organ input · result: ${rule?.entityName || "Unknown"}`;
+    }
+    return itemDescription(itemId) || "Sacrificial Organ related item";
   }
 
   function renderWikiSearchResults() {
@@ -605,6 +739,13 @@
       setActiveModeButton();
       syncModeChrome();
       renderPoisonBrowser();
+    } else if (next.type === "sacrifice") {
+      state.mode = "recipes";
+      state.kind = "sacrifice";
+      state.wikiKind = "all";
+      setActiveModeButton();
+      syncModeChrome();
+      renderSacrificialOrganBrowser();
     } else if (next.type === "home") {
       state.mode = "recipes";
       state.kind = "all";
@@ -891,7 +1032,7 @@
     panel.appendChild(grid);
     els.formulaBoard.innerHTML = "";
     els.formulaBoard.appendChild(panel);
-    renderPotionInspector();
+    renderPotionInspector("recipes");
   }
 
   function renderPotionRecipeCard(recipe) {
@@ -927,14 +1068,18 @@
     return card;
   }
 
-  function renderPotionInspector() {
+  function renderPotionInspector(tab = "recipes") {
     els.inspectorContent.classList.add("is-hidden");
     els.inspectorContent.classList.remove("pet-inspector-content");
     els.emptyInspector.classList.remove("is-hidden");
     const title = els.emptyInspector.querySelector("h2");
     const copy = els.emptyInspector.querySelector("p");
-    if (title) title.textContent = "Select a potion recipe";
-    if (copy) copy.textContent = "Hover a potion for its item description, or open it to inspect ingredients, stations, tools, and sell data.";
+    if (title) title.textContent = tab === "combinations" ? "Select a combination item" : "Select a potion recipe";
+    if (copy) {
+      copy.textContent = tab === "combinations"
+        ? "Open a cauldron item, organ, or resulting creature/item to inspect the local data."
+        : "Hover a potion for its item description, or open it to inspect ingredients, stations, tools, and sell data.";
+    }
   }
 
   function renderPoisonBrowser() {
@@ -949,6 +1094,18 @@
     els.recipeDetails.appendChild(pill("Two organ slots from local process data"));
     renderWeaponPoisonPanel(weaponRelatedRecipes);
     renderPoisonInspector("weapon");
+  }
+
+  function renderSacrificialOrganBrowser() {
+    els.recipeKind.textContent = "Sacrificial Organ";
+    els.recipeTitle.textContent = "Sacrificial Organ";
+    els.recipeDetails.innerHTML = "";
+    els.recipeDetails.appendChild(pill(`${sacrificialOrganRules.length} setup rules`));
+    els.recipeDetails.appendChild(pill(`${Object.keys(weaponPoisonOrganTraits).length} organ records`));
+    els.recipeDetails.appendChild(pill("One organ slot from local process data"));
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(renderSacrificialOrganPanelContent());
+    renderPotionInspector("combinations");
   }
 
   function renderPoisonRecipeCard(recipe) {
@@ -989,6 +1146,11 @@
   }
 
   function renderWeaponPoisonPanel(relatedRecipes) {
+    els.formulaBoard.innerHTML = "";
+    els.formulaBoard.appendChild(renderWeaponPoisonPanelContent(relatedRecipes));
+  }
+
+  function renderWeaponPoisonPanelContent(relatedRecipes) {
     const panel = document.createElement("div");
     panel.className = "poison-weapon-panel";
 
@@ -1043,8 +1205,435 @@
     recipeBlock.appendChild(recipeGrid);
     panel.appendChild(recipeBlock);
 
-    els.formulaBoard.innerHTML = "";
-    els.formulaBoard.appendChild(panel);
+    return panel;
+  }
+
+  function renderSacrificialOrganPanelContent() {
+    const panel = document.createElement("div");
+    panel.className = "poison-weapon-panel sacrificial-organ-panel";
+
+    const note = document.createElement("div");
+    note.className = "poison-note";
+    note.innerHTML = `
+      <strong>Sacrificial Organ system</strong>
+      <p>The local process data shows Sacrificial Organ as a Witchcraft cauldron mix with one organ slot: one witchcraft organ, Infected Raw Hide x5, and Reagent Powder x10. The result rule comes from WTSacrificialOrganSetup.</p>
+    `;
+    panel.appendChild(note);
+
+    panel.appendChild(renderSacrificialOrganFacts());
+    panel.appendChild(renderSacrificialOrganMixer());
+
+    const itemHeading = document.createElement("div");
+    itemHeading.className = "poison-section-title";
+    itemHeading.innerHTML = `
+      <strong>Core items</strong>
+      <span>${sacrificialOrganRelatedItemIds.filter((id) => items[id]).length} items</span>
+    `;
+    panel.appendChild(itemHeading);
+
+    const itemGrid = document.createElement("div");
+    itemGrid.className = "poison-item-grid";
+    for (const itemId of sacrificialOrganRelatedItemIds) {
+      if (!items[itemId]) continue;
+      itemGrid.appendChild(renderPoisonItemCard(itemId));
+    }
+    panel.appendChild(itemGrid);
+
+    return panel;
+  }
+
+  function renderSacrificialOrganFacts() {
+    const wrap = document.createElement("div");
+    wrap.className = "poison-facts-grid";
+    [
+      {
+        title: "How to make it",
+        value: "Use the Witchcrafter's cauldron",
+        detail: "This is a special organ-based process, not a normal potion recipe.",
+      },
+      {
+        title: "Required materials",
+        value: "1 organ + Infected Raw Hide x5 + Reagent Powder x10",
+        detail: "The organ slot decides the resulting summon/target rule.",
+      },
+      {
+        title: "Rules extracted",
+        value: `${sacrificialOrganRules.length} setup rules`,
+        detail: "Rules come from WTSacrificialOrganSetup in the local game resources.",
+      },
+      {
+        title: "Fallback",
+        value: "Other organs become Cursed kobold",
+        detail: "The final setup rule has no specific organ list, so it is shown as the fallback.",
+      },
+    ].forEach((fact) => wrap.appendChild(renderPoisonFactCard(fact)));
+    return wrap;
+  }
+
+  function renderSacrificialOrganMixer() {
+    const section = document.createElement("div");
+    section.className = "poison-mixer sacrificial-organ-mixer";
+
+    const componentIds = sacrificialOrganCandidateItemIds();
+    const filteredIds = filterSacrificialOrganItems(componentIds);
+    state.sacrificialOrganItem = normalizeSacrificialOrganSelection(state.sacrificialOrganItem);
+    const selectedItemId = state.sacrificialOrganItem;
+
+    const heading = document.createElement("div");
+    heading.className = "poison-section-title";
+    heading.innerHTML = `
+      <strong>Organ mixer</strong>
+      <span>${selectedItemId ? "1/1 selected" : "0/1 selected"}</span>
+    `;
+    section.appendChild(heading);
+
+    const intro = document.createElement("div");
+    intro.className = "poison-note poison-compact-note";
+    intro.innerHTML = `
+      <strong>Choose one organ to preview the sacrifice result</strong>
+      <p>The result is matched against the original WTSacrificialOrganSetup rules. Specific organs have special outputs; all other organs use the fallback rule.</p>
+    `;
+    section.appendChild(intro);
+
+    const controls = document.createElement("div");
+    controls.className = "poison-mixer-controls";
+    const searchLabel = document.createElement("label");
+    searchLabel.className = "field";
+    searchLabel.innerHTML = `
+      <span>Filter organs</span>
+      <input type="search" value="${escapeHtml(state.sacrificialOrganQuery)}" placeholder="Search organ or result...">
+    `;
+    const searchInput = searchLabel.querySelector("input");
+    searchInput.addEventListener("input", () => {
+      state.sacrificialOrganQuery = searchInput.value.trim();
+      renderSacrificialOrganBrowser();
+    });
+    controls.appendChild(searchLabel);
+
+    const clear = document.createElement("button");
+    clear.type = "button";
+    clear.className = "secondary-action poison-mixer-clear";
+    clear.textContent = "Clear mix";
+    clear.disabled = !selectedItemId;
+    clear.addEventListener("click", () => {
+      state.sacrificialOrganItem = "";
+      renderSacrificialOrganBrowser();
+    });
+    controls.appendChild(clear);
+    section.appendChild(controls);
+
+    section.appendChild(renderSacrificialOrganCauldronRecipe(selectedItemId));
+    section.appendChild(renderSacrificialOrganResult(selectedItemId));
+
+    const pickerTitle = document.createElement("div");
+    pickerTitle.className = "poison-section-title poison-picker-title";
+    pickerTitle.innerHTML = `
+      <strong>Available organs/components</strong>
+      <span>${filteredIds.length} shown</span>
+    `;
+    section.appendChild(pickerTitle);
+
+    const picker = document.createElement("div");
+    picker.className = "poison-mixer-picker";
+    for (const itemId of filteredIds) picker.appendChild(renderSacrificialOrganChoice(itemId, selectedItemId === itemId));
+    if (!filteredIds.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-note sell-empty";
+      empty.textContent = "No organs match this filter.";
+      picker.appendChild(empty);
+    }
+    section.appendChild(picker);
+    return section;
+  }
+
+  function normalizeSacrificialOrganSelection(itemId) {
+    return itemId && items[itemId] ? itemId : "";
+  }
+
+  function sacrificialOrganCandidateItemIds() {
+    const explicit = sacrificialOrganRules.flatMap((rule) => rule.specificOrgansOnly || []);
+    return [...new Set([...Object.keys(weaponPoisonOrganTraits), ...explicit])]
+      .filter((itemId) => items[itemId])
+      .sort((a, b) => {
+        const levelDelta = Number(weaponPoisonOrganTraits[a]?.requiredWitchcraft || 999) - Number(weaponPoisonOrganTraits[b]?.requiredWitchcraft || 999);
+        if (levelDelta) return levelDelta;
+        return itemName(a).localeCompare(itemName(b));
+      });
+  }
+
+  function filterSacrificialOrganItems(componentIds) {
+    const query = normalize(state.sacrificialOrganQuery);
+    if (!query) return componentIds;
+    return componentIds.filter((itemId) => {
+      const rule = sacrificialRuleForOrgan(itemId);
+      return [
+        itemId,
+        itemName(itemId),
+        itemDescription(itemId),
+        compactWitchcraftOrganText(itemId),
+        rule?.entityId,
+        rule?.entityName,
+        rule?.specificOrgansOnly?.length ? "specific" : "fallback",
+      ].some((value) => normalize(value).includes(query));
+    });
+  }
+
+  function sacrificialRuleForOrgan(itemId) {
+    const organ = weaponPoisonOrganTraits[itemId];
+    const organLevel = Number(organ?.requiredWitchcraft || 0);
+    const specific = sacrificialOrganRules.find((rule) =>
+      (rule.specificOrgansOnly || []).includes(itemId) &&
+      organLevel >= Number(rule.organMinLevel || 0)
+    );
+    if (specific) return specific;
+    return sacrificialOrganRules.find((rule) => !(rule.specificOrgansOnly || []).length) || null;
+  }
+
+  function renderSacrificialOrganCauldronRecipe(itemId) {
+    const result = evaluateSacrificialOrganMix(itemId);
+    const wrap = document.createElement("div");
+    wrap.className = "poison-cauldron-recipe sacrificial-cauldron-recipe";
+    wrap.appendChild(renderSacrificialOrganSlot(itemId));
+    wrap.appendChild(renderPoisonRecipeOperator("+"));
+    wrap.appendChild(renderPoisonRecipeFixedSlot("InfectedRawHide", "Infected raw hide", "x5"));
+    wrap.appendChild(renderPoisonRecipeOperator("+"));
+    wrap.appendChild(renderPoisonRecipeFixedSlot("ReagentPowder", "Reagent powder", "x10"));
+    wrap.appendChild(renderPoisonRecipeOperator("→", "arrow"));
+    wrap.appendChild(renderSacrificialOrganResultSlot(result));
+    return wrap;
+  }
+
+  function renderSacrificialOrganSlot(itemId) {
+    const slot = document.createElement("button");
+    slot.type = "button";
+    slot.className = "poison-recipe-slot poison-organ-slot";
+    slot.classList.toggle("is-empty", !itemId);
+    if (itemId) {
+      attachWeaponPoisonOrganTooltip(slot, itemId);
+      slot.appendChild(renderUntooltippedIcon(itemId));
+      const text = document.createElement("span");
+      text.innerHTML = `
+        <strong>${escapeHtml(itemName(itemId))}</strong>
+        <small>Organ slot · click to remove</small>
+      `;
+      slot.appendChild(text);
+      slot.addEventListener("click", () => {
+        state.sacrificialOrganItem = "";
+        renderSacrificialOrganBrowser();
+      });
+    } else {
+      slot.innerHTML = `
+        <span class="poison-empty-icon" aria-hidden="true"></span>
+        <span>
+          <strong>Organ slot</strong>
+          <small>Choose an organ below</small>
+        </span>
+      `;
+    }
+    return slot;
+  }
+
+  function renderSacrificialOrganResultSlot(result) {
+    const slot = document.createElement("button");
+    slot.type = "button";
+    slot.className = "poison-recipe-slot poison-result-slot";
+    const entry = result.entry || creatureEntryForLocalId(result.entityId);
+    slot.appendChild(renderSacrificialEntityIcon(result.entityId, result.entityName));
+    const text = document.createElement("span");
+    text.innerHTML = `
+      <strong>${escapeHtml(result.entityName || "Unknown result")}</strong>
+      <small>${escapeHtml(sacrificialResultSlotSubtitle(result, entry))}</small>
+    `;
+    slot.appendChild(text);
+    if (entry) {
+      slot.title = `Open ${entry.name}`;
+      slot.addEventListener("click", () => navigate({ type: "wiki", id: entry.id }));
+    } else {
+      slot.disabled = true;
+    }
+    return slot;
+  }
+
+  function renderSacrificialOrganResult(itemId) {
+    const result = evaluateSacrificialOrganMix(itemId);
+    const box = document.createElement("div");
+    box.className = `poison-mixer-result is-${result.status}`;
+
+    const head = document.createElement("div");
+    head.className = "poison-mixer-result-head sacrificial-result-head";
+    head.appendChild(renderSacrificialEntityIcon(result.entityId, result.entityName));
+    const headText = document.createElement("span");
+    headText.innerHTML = `
+      <small>${escapeHtml(result.statusLabel)}</small>
+      <strong>${escapeHtml(result.title)}</strong>
+      <em>${escapeHtml(result.subtitle)}</em>
+    `;
+    head.appendChild(headText);
+    box.appendChild(head);
+
+    const effects = document.createElement("div");
+    effects.className = "poison-mixer-effects";
+    const effectRows = result.effects.length ? result.effects : ["No organ selected yet"];
+    for (const effect of effectRows) {
+      const chip = document.createElement("span");
+      chip.textContent = effect;
+      effects.appendChild(chip);
+    }
+    box.appendChild(effects);
+
+    const requirements = document.createElement("div");
+    requirements.className = "poison-mixer-requirements";
+    for (const row of sacrificialOrganCraftRequirements) {
+      const chip = document.createElement("span");
+      chip.textContent = row;
+      requirements.appendChild(chip);
+    }
+    box.appendChild(requirements);
+
+    if (result.traits.length) {
+      const traits = document.createElement("div");
+      traits.className = "poison-mixer-traits sacrificial-result-traits";
+      for (const row of result.traits) {
+        const trait = document.createElement("div");
+        trait.className = "poison-mixer-trait";
+        trait.innerHTML = `
+          <small>${escapeHtml(row.label)}</small>
+          <strong>${escapeHtml(row.value)}</strong>
+        `;
+        traits.appendChild(trait);
+      }
+      box.appendChild(traits);
+    }
+
+    if (result.notes.length) {
+      const notes = document.createElement("ul");
+      for (const note of result.notes) {
+        const li = document.createElement("li");
+        li.textContent = note;
+        notes.appendChild(li);
+      }
+      box.appendChild(notes);
+    }
+    return box;
+  }
+
+  function evaluateSacrificialOrganMix(itemId) {
+    if (!itemId) {
+      return {
+        status: "empty",
+        statusLabel: "No mix",
+        title: "Select one organ to preview a result",
+        subtitle: "The output will appear here after choosing an organ.",
+        entityId: "",
+        entityName: "Sacrificial Organ",
+        ruleLabel: "No organ selected",
+        entry: null,
+        effects: [],
+        traits: [],
+        notes: ["The local Sacrificial Organ process uses one organ slot."],
+      };
+    }
+    const organ = weaponPoisonOrganTraits[itemId] || {};
+    const rule = sacrificialRuleForOrgan(itemId);
+    const specific = Boolean(rule?.specificOrgansOnly?.length);
+    const classes = (rule?.entityClasses || []).join(", ") || "Any";
+    const entry = creatureEntryForLocalId(rule?.entityId) || creatureEntryForName(rule?.entityName);
+    const organLevel = Number(organ.requiredWitchcraft || 0);
+    const minLevel = Number(rule?.organMinLevel || 0);
+    const levelStatus = organLevel >= minLevel ? "Meets rule" : "Below rule minimum";
+    const entryLevel = entry?.level ?? entry?.stats?.level ?? "";
+    const entryHealth = entry?.stats?.health ?? "";
+    const dropCount = entry?.drops?.length || 0;
+    return {
+      status: "known",
+      statusLabel: specific ? "Specific setup rule" : "Fallback setup rule",
+      title: rule?.entityName || "Unknown result",
+      subtitle: `${itemName(itemId)} creates ${rule?.entityName || "Unknown result"}`,
+      entityId: rule?.entityId || "",
+      entityName: rule?.entityName || "Unknown result",
+      ruleLabel: specific ? "Specific organ result" : "Fallback result",
+      entry,
+      effects: [
+        specific ? "Specific organ result" : "Fallback result for unmatched organs",
+        entry ? "Creature page found" : "No creature page matched",
+        dropCount ? `${dropCount} known drops` : "Drops not found in wiki data",
+      ],
+      traits: [
+        { label: "Selected organ", value: itemName(itemId) },
+        { label: "Organ Witchcraft", value: organ.requiredWitchcraft ?? "unknown" },
+        { label: "Rule minimum", value: rule?.organMinLevel ?? 0 },
+        { label: "Level check", value: levelStatus },
+        { label: "Entity class rule", value: classes },
+        { label: "Result entity id", value: rule?.entityId || "Unknown" },
+        { label: "Wiki creature", value: entry ? entry.name : "Not matched" },
+        { label: "Creature level", value: entryLevel || "Unknown" },
+        { label: "Creature health", value: entryHealth || "Unknown" },
+      ],
+      notes: [
+        "Values are extracted from WTSacrificialOrganSetup in the local game resources.",
+        specific ? "This organ has a specific sacrifice result." : "No specific rule matched, so the fallback result is shown.",
+        entry ? "Click the result card in the recipe row to open the creature page." : "The result exists in the setup rule, but no matching public creature entry was found in the current wiki data.",
+      ],
+    };
+  }
+
+  function sacrificialResultSlotSubtitle(result, entry) {
+    if (!result?.entityId) return result?.ruleLabel || "No organ selected";
+    const level = entry?.level ?? entry?.stats?.level;
+    const parts = [result.ruleLabel || "Sacrifice result"];
+    if (level) parts.push(`Level ${level}`);
+    if (entry?.drops?.length) parts.push(`${entry.drops.length} drops`);
+    if (!entry) parts.push(result.entityId);
+    return parts.join(" · ");
+  }
+
+  function renderSacrificialOrganChoice(itemId, selected) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "poison-mixer-choice";
+    button.classList.toggle("is-selected", selected);
+    attachWeaponPoisonOrganTooltip(button, itemId);
+    button.appendChild(renderUntooltippedIcon(itemId));
+    const rule = sacrificialRuleForOrgan(itemId);
+    const organData = weaponPoisonOrganTraits[itemId];
+    const sourceCount = mergedDropSources(itemId).length;
+    const body = document.createElement("span");
+    body.className = "poison-mixer-choice-body";
+    body.innerHTML = `
+      <strong>${escapeHtml(itemName(itemId))}</strong>
+      <small>${escapeHtml(`Witchcraft ${organData?.requiredWitchcraft ?? "?"} · ${rule?.entityName || "Unknown result"}`)}</small>
+      <em>${selected ? "selected" : sourceCount ? `${sourceCount} sources` : "source unknown"}</em>
+    `;
+    button.appendChild(body);
+    button.addEventListener("click", () => {
+      state.sacrificialOrganItem = selected ? "" : itemId;
+      renderSacrificialOrganBrowser();
+    });
+    return button;
+  }
+
+  function creatureEntryForLocalId(entityId) {
+    const normalized = normalize(entityId);
+    if (!normalized) return null;
+    return wikiEntries.find((entry) =>
+      entry.type === "creature" &&
+      (normalize(entry.localId) === normalized || normalize(entry.id) === `creature:${normalized}` || normalize(entry.name) === normalized)
+    ) || wikiEntries.find((entry) => {
+      if (entry.type !== "creature") return false;
+      const localId = normalize(entry.localId);
+      return localId && (normalized.startsWith(localId) || localId.startsWith(normalized));
+    }) || null;
+  }
+
+  function creatureEntryForName(entityName) {
+    const normalized = normalize(entityName);
+    if (!normalized) return null;
+    return wikiEntries.find((entry) => entry.type === "creature" && normalize(entry.name) === normalized) || null;
+  }
+
+  function renderSacrificialEntityIcon(entityId, entityName) {
+    const entry = creatureEntryForLocalId(entityId);
+    return entry ? renderWikiIcon(entry) : renderInlineImage("", entityName, initials(entityName || entityId || "SO"));
   }
 
   function renderWeaponPoisonFacts() {
