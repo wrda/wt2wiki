@@ -45,6 +45,8 @@
     `Witchcraft organs x${weaponPoisonOrganSlotCount}`,
     "Reagent Powder x5",
   ];
+  const weaponPoisonEffectBaseMultiplier = 1.2;
+  const weaponPoisonChargeBaseMultiplier = 1.5;
   const sacrificialOrganRules = data.sacrificialOrganRules || [];
   const sacrificialOrganRelatedItemIds = [
     "SacrificialOrgan",
@@ -105,6 +107,9 @@
     poisonTab: "weapon",
     poisonMixerItems: [],
     poisonMixerQuery: "",
+    poisonWitchcraftLevel: 0,
+    poisonCornPie: false,
+    poisonWeaponMode: "witchcraft",
     sacrificialOrganItem: "",
     sacrificialOrganQuery: "",
     goldGoblinMode: "recommended",
@@ -1665,6 +1670,11 @@
         detail: "This bonus increases the number of weapon poison charges when applying the poison.",
       },
       {
+        title: "Poison charge base",
+        value: "Organ charges x1.5",
+        detail: "The ItemEffectValue data includes a 1.5 charge boost, which matches the in-game 220 + 220 -> 660 example.",
+      },
+      {
         title: "Food modifier",
         value: "Corn pie: +10% charges for 10 min",
         detail: "Corn pie increases the number of charges when applying weapon poison.",
@@ -1704,6 +1714,7 @@
     const filteredIds = filterWeaponPoisonMixerItems(componentIds);
     const selectedIds = normalizeWeaponPoisonMixerSelection(state.poisonMixerItems);
     state.poisonMixerItems = selectedIds;
+    normalizeWeaponPoisonMixerState(selectedIds);
 
     const heading = document.createElement("div");
     heading.className = "poison-section-title";
@@ -1750,6 +1761,7 @@
     section.appendChild(controls);
 
     section.appendChild(renderWeaponPoisonMixerSelection(selectedIds));
+    section.appendChild(renderWeaponPoisonMixerSettings(selectedIds));
     section.appendChild(renderWeaponPoisonCauldronRecipe(selectedIds));
     section.appendChild(renderWeaponPoisonMixerResult(selectedIds));
 
@@ -1780,6 +1792,11 @@
       .slice(0, weaponPoisonOrganSlotCount);
   }
 
+  function normalizeWeaponPoisonMixerState(selectedIds) {
+    state.poisonWitchcraftLevel = clamp(Number(state.poisonWitchcraftLevel) || 0, 0, 75);
+    state.poisonWeaponMode = state.poisonWeaponMode === "regular" ? "regular" : "witchcraft";
+  }
+
   function selectedOrganCount(selectedIds, itemId) {
     return selectedIds.filter((selectedId) => selectedId === itemId).length;
   }
@@ -1787,6 +1804,77 @@
   function removeSelectedOrganAt(index) {
     state.poisonMixerItems = state.poisonMixerItems.filter((_, selectedIndex) => selectedIndex !== index);
     renderPoisonBrowser();
+  }
+
+  function renderWeaponPoisonMixerSettings(selectedIds) {
+    const section = document.createElement("div");
+    section.className = "poison-mixer-settings";
+
+    const title = document.createElement("div");
+    title.className = "poison-section-title poison-settings-title";
+    title.innerHTML = `
+      <strong>Result settings</strong>
+      <span>Charge bonuses and weapon display</span>
+    `;
+    section.appendChild(title);
+
+    const global = document.createElement("div");
+    global.className = "poison-settings-grid";
+
+    const levelLabel = document.createElement("label");
+    levelLabel.className = "field";
+    levelLabel.innerHTML = `
+      <span>Witchcraft level</span>
+      <input type="number" min="0" max="75" step="1" value="${escapeHtml(state.poisonWitchcraftLevel)}">
+    `;
+    const levelInput = levelLabel.querySelector("input");
+    const commitLevel = () => {
+      state.poisonWitchcraftLevel = clamp(Number(levelInput.value) || 0, 0, 75);
+      levelInput.value = state.poisonWitchcraftLevel;
+      renderPoisonBrowser();
+    };
+    levelInput.addEventListener("input", () => {
+      state.poisonWitchcraftLevel = clamp(Number(levelInput.value) || 0, 0, 75);
+    });
+    levelInput.addEventListener("change", commitLevel);
+    levelInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      event.preventDefault();
+      commitLevel();
+    });
+    global.appendChild(levelLabel);
+
+    const weaponLabel = document.createElement("label");
+    weaponLabel.className = "field";
+    weaponLabel.innerHTML = `
+      <span>Applied weapon</span>
+      <select>
+        <option value="witchcraft"${state.poisonWeaponMode === "witchcraft" ? " selected" : ""}>Witchcraft weapon (100%)</option>
+        <option value="regular"${state.poisonWeaponMode === "regular" ? " selected" : ""}>Regular weapon (80%)</option>
+      </select>
+    `;
+    const weaponSelect = weaponLabel.querySelector("select");
+    weaponSelect.addEventListener("change", () => {
+      state.poisonWeaponMode = weaponSelect.value === "regular" ? "regular" : "witchcraft";
+      renderPoisonBrowser();
+    });
+    global.appendChild(weaponLabel);
+
+    const cornPie = document.createElement("label");
+    cornPie.className = "poison-toggle";
+    cornPie.innerHTML = `
+      <input type="checkbox"${state.poisonCornPie ? " checked" : ""}>
+      <span>Corn pie charge bonus (+10%)</span>
+    `;
+    const cornInput = cornPie.querySelector("input");
+    cornInput.addEventListener("change", () => {
+      state.poisonCornPie = cornInput.checked;
+      renderPoisonBrowser();
+    });
+    global.appendChild(cornPie);
+
+    section.appendChild(global);
+    return section;
   }
 
   function filterWeaponPoisonMixerItems(componentIds) {
@@ -1876,7 +1964,7 @@
       const text = document.createElement("span");
       text.innerHTML = `
         <strong>${escapeHtml(itemName(itemId))}</strong>
-        <small>Organ slot ${index + 1} · click to remove</small>
+        <small>x1 · click to remove</small>
       `;
       slot.appendChild(text);
       slot.addEventListener("click", () => removeSelectedOrganAt(index));
@@ -1899,7 +1987,7 @@
     attachItemTooltip(slot, "WeaponPoison");
     slot.appendChild(renderUntooltippedIcon("WeaponPoison"));
     const text = document.createElement("span");
-    const summary = result.effects.length ? result.effects.slice(0, 3).join(" · ") : result.title;
+    const summary = result.summary || (result.effects.length ? result.effects.slice(0, 3).join(" · ") : result.title);
     text.innerHTML = `
       <strong>Weapon Poison</strong>
       <small>${escapeHtml(summary)}</small>
@@ -2083,6 +2171,103 @@
     return `${parsed.prefix}${number}${parsed.unit}${suffix}`;
   }
 
+  function weaponPoisonChargeBonus() {
+    return (Number(state.poisonWitchcraftLevel) || 0) * 0.006 + (state.poisonCornPie ? 0.1 : 0);
+  }
+
+  function weaponPoisonDisplayMultiplier() {
+    return state.poisonWeaponMode === "regular" ? 0.8 : 1;
+  }
+
+  function roundGameValue(value) {
+    return Math.round(Number(value) || 0);
+  }
+
+  function formatSignedNumber(value) {
+    const rounded = Number(value.toFixed(2));
+    const text = Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/\.?0+$/, "");
+    return `${rounded >= 0 ? "+" : ""}${text}`;
+  }
+
+  function formatSignedPercent(value) {
+    const pct = Number((value * 100).toFixed(2));
+    const text = Number.isInteger(pct) ? String(pct) : pct.toFixed(2).replace(/\.?0+$/, "");
+    return `${pct >= 0 ? "+" : ""}${text}%`;
+  }
+
+  function scaledWeaponPoisonStatsBySlot(selectedIds, confirmed) {
+    const totals = {
+      addedDamage: 0,
+      addedPlagueDamage: 0,
+      addedCriticalChance: 0,
+      addedCriticalValue: 0,
+      addedIgnoreAbsorb: 0,
+      addedIgnoreDefense: 0,
+      addedLifeSteal: 0,
+      charges: 0,
+    };
+    const effects = new Map();
+    selectedIds.forEach((itemId, index) => {
+      const data = weaponPoisonOrganTraits[itemId];
+      if (!data) return;
+      const raw = data.rawAttackValues || {};
+      totals.addedDamage += Number(raw.addedDamage || 0);
+      totals.addedPlagueDamage += Number(raw.addedPlagueDamage || 0);
+      totals.addedCriticalChance += Number(raw.addedCriticalChance || 0);
+      totals.addedCriticalValue += Number(raw.addedCriticalValue || 0);
+      totals.addedIgnoreAbsorb += Number(raw.addedIgnoreAbsorb || 0);
+      totals.addedIgnoreDefense += Number(raw.addedIgnoreDefense || 0);
+      totals.addedLifeSteal += Number(raw.addedLifeSteal || 0);
+      totals.charges += Number(data.charges || 0);
+
+      const effect = data.attackEffect || {};
+      if (effect.name || effect.id) {
+        const key = effect.id || effect.name;
+        const current = effects.get(key) || { label: effect.name || effect.id, chance: 0, time: 0 };
+        current.chance += Number(effect.chance || 0);
+        current.time += Number(effect.time || 0);
+        effects.set(key, current);
+      }
+    });
+    return { totals, effects: [...effects.values()] };
+  }
+
+  function weaponPoisonTraitRows(totals, multiplier = 1) {
+    const rows = [];
+    const intFields = [
+      ["Damage", "addedDamage"],
+      ["Plague damage", "addedPlagueDamage"],
+      ["Life steal", "addedLifeSteal"],
+    ];
+    for (const [label, key] of intFields) {
+      const value = roundGameValue(totals[key] * multiplier);
+      if (value) rows.push({ label, value: formatSignedNumber(value) });
+    }
+    const percentFields = [
+      ["Critical chance", "addedCriticalChance"],
+      ["Critical damage", "addedCriticalValue"],
+      ["Ignores absorption", "addedIgnoreAbsorb"],
+      ["Ignores defense", "addedIgnoreDefense"],
+    ];
+    for (const [label, key] of percentFields) {
+      const value = Number(totals[key] || 0) * multiplier;
+      if (value) rows.push({ label, value: formatSignedPercent(value) });
+    }
+    return rows;
+  }
+
+  function weaponPoisonEffectRows(effects, multiplier = 1) {
+    return effects.map((effect) => ({
+      label: effect.label,
+      value: `${formatSignedPercent(effect.chance * multiplier)} chance for ${trimNumber(effect.time * multiplier)}s`.replace("+", ""),
+    }));
+  }
+
+  function trimNumber(value) {
+    const rounded = Number(Number(value || 0).toFixed(2));
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(2).replace(/\.?0+$/, "");
+  }
+
   function evaluateWeaponPoisonMix(selectedIds) {
     if (!selectedIds.length) {
       return {
@@ -2112,30 +2297,57 @@
 
     if (confirmed.length) {
       const allConfirmed = confirmed.length === selectedIds.length;
+      const scaled = scaledWeaponPoisonStatsBySlot(selectedIds, confirmed);
+      const bottleEffectMultiplier = weaponPoisonEffectBaseMultiplier;
+      const appliedEffectMultiplier = bottleEffectMultiplier * weaponPoisonDisplayMultiplier();
+      const bottleRows = [
+        ...weaponPoisonTraitRows(scaled.totals, bottleEffectMultiplier),
+        ...weaponPoisonEffectRows(scaled.effects, bottleEffectMultiplier),
+      ];
+      const appliedRows = weaponPoisonDisplayMultiplier() === 1
+        ? []
+        : [
+            { label: "Applied weapon display", value: "Regular weapon 80%" },
+            ...weaponPoisonTraitRows(scaled.totals, appliedEffectMultiplier),
+            ...weaponPoisonEffectRows(scaled.effects, appliedEffectMultiplier),
+          ];
+      const organChargeTotal = roundGameValue(scaled.totals.charges);
+      const baseCharges = roundGameValue(organChargeTotal * weaponPoisonChargeBaseMultiplier);
+      const finalCharges = roundGameValue(baseCharges * (1 + weaponPoisonChargeBonus()));
       const requirementRows = [
         selectedOrganCountText(selectedIds) ? `Selected organs: ${selectedOrganCountText(selectedIds)}` : "",
         `Required Witchcraft: ${Math.max(...confirmed.map(({ data }) => Number(data.requiredWitchcraft || 0)))}`,
+        `Bottle effect multiplier: x${weaponPoisonEffectBaseMultiplier}`,
+        `Base charge multiplier: x${weaponPoisonChargeBaseMultiplier}`,
+        `Charge bonus: +${trimNumber(weaponPoisonChargeBonus() * 100)}% (${state.poisonWitchcraftLevel} Witchcraft${state.poisonCornPie ? " + Corn pie" : ""})`,
         ...confirmed.flatMap(({ data }) => data.success ? [`Success ${data.success}`] : []),
       ].filter(Boolean);
       const affects = [...new Set(confirmed.map(({ data }) => data.affects).filter(Boolean))];
       const traitRows = [
         affects.length ? { label: "Affects on", value: affects.join(" · ") } : null,
-        ...aggregateWitchcraftOrganTraits(confirmed),
+        { label: "Bottle charges", value: `${finalCharges}` },
+        ...(baseCharges !== finalCharges ? [{ label: "Base charges", value: `${baseCharges}` }] : []),
+        ...(organChargeTotal !== baseCharges ? [{ label: "Organ charge total", value: `${organChargeTotal}` }] : []),
+        ...bottleRows,
+        ...appliedRows,
       ].filter(Boolean);
-      const chargeTotal = confirmed.reduce((sum, row) => sum + Number(row.data.charges || 0), 0);
       return {
         status: allConfirmed && slotReady ? "known" : "partial",
-        statusLabel: allConfirmed ? "Original organ data" : "Partially original data",
+        statusLabel: allConfirmed ? "Calculated from local organ data" : "Partially original data",
         title: slotReady
-          ? allConfirmed ? "Weapon poison contribution preview" : "Mixed original and unverified organs"
+          ? allConfirmed ? "Weapon poison bottle result" : "Mixed original and unverified organs"
           : "One organ selected, choose the second slot",
+        summary: `${finalCharges} charges${bottleRows.length ? ` · ${bottleRows.slice(0, 2).map((row) => `${row.label} ${row.value}`).join(" · ")}` : ""}`,
         effects: [...new Set(traitRows.filter((row) => row.label !== "Affects on").map((row) => row.label))],
-        charges: `${slotReady ? "Selected organ charge total" : "Selected organ charge so far"}: ${chargeTotal}.`,
+        charges: `${slotReady ? "Final bottle charges" : "Selected organ charge so far"}: ${finalCharges}.`,
         requirements: [...weaponPoisonCraftRequirements, ...new Set(requirementRows)],
         traits: traitRows,
         notes: [
           slotNote,
-          "Values are extracted from WTWitchcraftOrgan in the local game resources.",
+          "x1/x2 beside an organ is the stack amount. Selecting the same organ in both cauldron slots counts it twice.",
+          "The bottle result sums the two selected organ records from WTWitchcraftOrgan, then applies the x1.2 Weapon Poison bottle effect multiplier.",
+          "Weapon poison charges use the ItemEffectValue x1.5 boost found in the local game assembly.",
+          "Regular non-witchcraft weapons display poison combat values at 80% effectiveness.",
           ...(unknownSelected.length ? [`Unverified selected organs: ${unknownSelected.map(itemName).join(", ")}.`] : []),
           ...(allConfirmed ? [] : ["Only the original organ records above have exact numeric values right now."]),
         ],
@@ -2605,6 +2817,8 @@
 
     els.formulaBoard.innerHTML = "";
     els.formulaBoard.appendChild(flow);
+    const guide = renderItemPlayerGuide(recipe.result, { compact: true, title: "How this item works" });
+    if (guide) els.formulaBoard.appendChild(guide);
   }
 
   function renderStationButtons(stations) {
@@ -6064,6 +6278,230 @@
         `).join("")}
       </div>
     `;
+  }
+
+  function renderItemPlayerGuide(itemId, options = {}) {
+    const rows = itemPlayerGuideRows(itemId, options);
+    if (!rows.length) return null;
+    const guide = document.createElement("section");
+    guide.className = `item-player-guide${options.compact ? " is-compact" : ""}`;
+    const title = options.title || "Player notes";
+    guide.innerHTML = `
+      <div class="item-player-guide-head">
+        <strong>${escapeHtml(title)}</strong>
+        <span>${escapeHtml(itemName(itemId))}</span>
+      </div>
+    `;
+    const list = document.createElement("div");
+    list.className = "item-player-guide-list";
+    for (const row of rows) {
+      const item = document.createElement("div");
+      item.className = "item-player-guide-row";
+      item.innerHTML = `
+        <div class="item-player-guide-label">
+          <strong>${escapeHtml(row.label)}</strong>
+          ${row.value ? `<span>${escapeHtml(row.value)}</span>` : ""}
+        </div>
+        <p>${escapeHtml(row.text)}</p>
+      `;
+      list.appendChild(item);
+    }
+    guide.appendChild(list);
+    return guide;
+  }
+
+  function itemPlayerGuideRows(itemId, options = {}) {
+    const rows = [];
+    const seen = new Set();
+    const add = (label, value, text, priority = 50) => {
+      if (!label || !text) return;
+      if (options.compact && /^(type|slot)$/i.test(label)) return;
+      const key = normalize(`${label} ${value} ${text}`);
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({ label, value: value == null ? "" : String(value), text, priority });
+    };
+
+    for (const group of itemDetailGroups(itemId)) {
+      for (const row of group.rows || []) {
+        const explanation = explainItemStat(itemId, row, group);
+        if (explanation) add(row.label, row.value, explanation, itemGuidePriority(row.label));
+      }
+    }
+
+    const description = itemDescription(itemId);
+    if (description && !rows.length) {
+      add("In-game description", "", description, 10);
+    }
+
+    for (const row of itemRoleGuideRows(itemId)) {
+      add(row.label, row.value, row.text, row.priority);
+    }
+
+    return rows.sort((a, b) => a.priority - b.priority || a.label.localeCompare(b.label));
+  }
+
+  function itemRoleGuideRows(itemId) {
+    const produced = recipesByResult.get(itemId) || [];
+    const used = usageByItem.get(itemId) || [];
+    const sources = mergedDropSources(itemId);
+    const soldBy = shopsByItem[itemId] || [];
+    const rows = [];
+    if (produced.length) {
+      const stations = craftingStationsForRecipes(produced).slice(0, 3).map(itemName).filter(Boolean);
+      rows.push({
+        label: "How to get",
+        value: `${produced.length} recipe${produced.length === 1 ? "" : "s"}`,
+        text: stations.length
+          ? `This item can be crafted. The main crafting station is ${stations.join(", ")}.`
+          : "This item can be crafted. Use the recipe above to see the materials and requirements.",
+        priority: 80,
+      });
+    }
+    if (used.length) {
+      const examples = used.slice(0, 3).map((recipe) => itemName(recipe.result)).filter(Boolean);
+      rows.push({
+        label: "Why keep it",
+        value: `${used.length} use${used.length === 1 ? "" : "s"}`,
+        text: examples.length
+          ? `This item is used as a material for ${examples.join(", ")}${used.length > examples.length ? ", and more recipes" : ""}.`
+          : "This item is used as a material in other recipes.",
+        priority: 82,
+      });
+    }
+    if (sources.length && !produced.length) {
+      const examples = sources.slice(0, 3).map((source) => source.source || source.sourceDisplay || source.kind).filter(Boolean);
+      rows.push({
+        label: "Where it comes from",
+        value: `${sources.length} source${sources.length === 1 ? "" : "s"}`,
+        text: examples.length
+          ? `Known local sources include ${examples.join(", ")}.`
+          : "Known local drop or gathering sources exist for this item.",
+        priority: 84,
+      });
+    }
+    if (soldBy.length) {
+      const names = soldBy.slice(0, 3).map((shop) => shop.shopName || shop.name).filter(Boolean);
+      rows.push({
+        label: "Shop note",
+        value: `${soldBy.length} shop${soldBy.length === 1 ? "" : "s"}`,
+        text: names.length
+          ? `This item is sold by ${names.join(", ")}.`
+          : "This item can be sold by NPC shops.",
+        priority: 86,
+      });
+    }
+    return rows;
+  }
+
+  function itemGuidePriority(label) {
+    const key = statKey(label);
+    if (key === "quality") return 1;
+    if (key === "requiredskill") return 2;
+    if (key === "durability") return 3;
+    if (key.includes("hatchet") || key.includes("pickaxe") || key.includes("gatherrate")) return 4;
+    if (key.includes("damage") || key.includes("defense") || key.includes("critical")) return 5;
+    if (key.includes("speed") || key.includes("chance") || key.includes("duration")) return 6;
+    if (key.includes("satiety") || key.includes("health") || key.includes("stamina")) return 7;
+    if (key === "type" || key === "slot") return 60;
+    return 20;
+  }
+
+  function explainItemStat(itemId, row, group) {
+    const label = row?.label || "";
+    const value = row?.value == null ? "" : String(row.value);
+    const key = statKey(label);
+    const item = itemRecord(itemId);
+    const category = statKey(group?.category || item.statDetails?.category || "");
+    const itemText = statKey(`${item.id} ${item.name}`);
+
+    if (key === "type") return "The broad item category. It tells you whether this is equipment, a weapon, food, material, or another utility item.";
+    if (key === "slot") return "Where the item is equipped. Only one item can normally occupy the same equipment slot.";
+    if (key === "quality") return "This wiki shows gear at 100% quality for clean comparison. In game, better quality usually means stronger rolls for damage, defense, tool power, durability, or bonuses.";
+    if (key === "requiredskill") return `You need ${value} to use this item properly. If the item is a tool, this also tells you which activity it belongs to.`;
+    if (key === "durability") return "How much use the item can take before it needs repair or replacement. Higher durability lasts longer during combat, gathering, or crafting use.";
+    if (key === "damage") return "The normal hit damage range. The first number is the lower roll, the second is the higher roll.";
+    if (key === "criticalchance" || key === "critchance") return "Chance for a hit to become critical. More critical chance means more frequent high-damage hits.";
+    if (key === "criticaldamage" || key === "critdamage") return "Damage multiplier when a critical hit happens. For example, x1.5 means a critical hit deals about 50% more damage than normal.";
+    if (key === "attackspeed") return "How fast the item attacks or modifies attack speed. Higher values or positive percentages mean more attacks over time.";
+    if (key === "splash") return "Shows whether the weapon can affect more than one nearby target when its attack supports splash damage.";
+    if (key === "hatchet") return "Tool power for chopping trees and actions that require a hatchet. A higher multiplier makes woodcutting work faster or more effective.";
+    if (key === "pickaxe") return "Tool power for mining rocks and ore. A higher value makes mining actions more effective.";
+    if (key === "shovel") return "Tool power for digging or soil/clay style actions. Higher values make those actions more effective.";
+    if (key === "saw") return "Tool power for woodworking tasks that require a saw. Higher values improve the tool's effectiveness for those recipes/actions.";
+    if (key === "hammer") return "Tool power for recipes or building actions that require a hammer. Higher values improve crafting/building effectiveness.";
+    if (key === "knife") return "Tool power for knife actions such as skinning, butchering, or recipes that require a knife.";
+    if (key === "butcheraxe") return "Tool power for butchering animal-related resources. Higher values improve the butchering tool's effectiveness.";
+    if (key === "sickle") return "Tool power for harvesting plants and agriculture actions that require a sickle.";
+    if (key === "bucket") return "Tool power for bucket actions, usually water or liquid handling.";
+    if (key === "fishingpole") return "Fishing rod power. Higher values improve fishing performance with this pole.";
+    if (key === "gatherrate") return "General gathering efficiency. For tools, higher gather rate usually means fewer actions or less time to collect resources.";
+    if (key === "defense") return "Reduces incoming damage. Higher defense makes the character tougher against attacks.";
+    if (key === "plaguedefense") return "Protection against plague-type damage or enemies. Useful in infected or plague-heavy areas.";
+    if (key === "absorption") return "Flat or direct damage soak before damage reaches you. Higher absorption helps reduce each incoming hit.";
+    if (key === "plagueabsorption") return "Damage soak against plague-type hits. Useful when fighting infected or plague enemies.";
+    if (key === "dodge") return "Chance or bonus to avoid attacks. More dodge means more hits can miss you.";
+    if (key === "dodgeskill") return "Bonus connected to dodge skill growth or dodge effectiveness. It supports evasive builds.";
+    if (key === "parry" || key === "parrychance") return "Chance to parry incoming attacks. Parry helps reduce or avoid damage when it triggers.";
+    if (key === "block") return "Shield block strength or chance. Higher block improves protection while using shields.";
+    if (key === "blockprojectile") return "Protection against arrows and other projectile attacks while blocking.";
+    if (key === "ignoredense" || key === "ignoredefense") return "Lets part of your damage bypass the target's defense. Strong against armored enemies.";
+    if (key === "ignoreabsorb") return "Lets part of your damage bypass the target's absorption. Useful against enemies with damage soak.";
+    if (key === "inventoryslots") return "Adds carrying capacity while equipped or used. More slots means more room for loot and materials.";
+    if (key === "actionslots") return "Adds quick/action slots, making more usable items or tools available without opening inventory.";
+    if (key === "usetime") return "How long the use action takes. Shorter use time is safer in combat and more convenient outside combat.";
+    if (key === "duration") return "How long the food, potion, buff, or effect lasts after use.";
+    if (key.includes("satiety")) return "Food value for hunger categories. Higher satiety keeps the character fed longer and can support food buff planning.";
+    if (key === "alcohol") return "Alcohol strength. It can be part of drink effects, but too much alcohol may create negative intoxication effects.";
+    if (key === "staminareplenish") return "Restores stamina when used. Useful before combat, gathering, travel, or repeated actions.";
+    if (key === "health" || key === "playerhealth") return "Changes maximum or current health depending on the item effect. Positive values improve survivability; negative values are a tradeoff.";
+    if (key === "stamina" || key === "playerstamina") return "Changes maximum or current stamina depending on the item effect. Stamina matters for movement, combat, and repeated actions.";
+    if (key === "healthrecovery" || key === "recoveryhealth" || key === "healrate") return "Improves healing or health recovery. Useful after fights or when sustaining damage over time.";
+    if (key === "healincomingboost") return "Increases healing received. This makes bandages, potions, or other healing effects stronger.";
+    if (key === "removes") return "This item removes the listed negative effect when used.";
+    if (key.includes("weaponpoisoncharges")) return "Increases how many charges you get when applying weapon poison, so one poison application lasts longer.";
+    if (key.includes("craftingspeed") || key.endsWith("craftingspeed")) return "Speeds up crafting. Useful when producing many items or long recipes.";
+    if (key.includes("craftingchance") || key.includes("buildingchance")) return "Improves success or bonus chance for crafting/building actions depending on the recipe type.";
+    if (key.includes("doublecraft")) return "Gives a chance to produce extra crafted output, saving materials over time.";
+    if (key.includes("savehalfresources")) return "Chance to save part of the materials when crafting this category.";
+    if (key.includes("addquality") || key.includes("maxquality")) return "Helps craft higher-quality items in the listed profession. Better quality usually improves the final stats.";
+    if (key.includes("xpgain") || key.includes("growth") || key.includes("experience")) return "Improves experience gain or skill growth for the listed activity.";
+    if (key.includes("double") && key.includes("xp")) return "Gives a chance to gain extra experience for the listed activity.";
+    if (key.includes("gathering") || key.includes("mining") || key.includes("lumbering") || key.includes("skinning") || key.includes("fishery")) {
+      return "Improves the named gathering profession. Depending on the label, it can increase speed, amount, chance, or experience gain.";
+    }
+    if (key.includes("doubleamount") || key.includes("amountchance")) return "Chance to receive extra output from that activity.";
+    if (key.includes("damagetoplayers")) return "Extra damage against players. Useful for PvP-focused gear or weapons.";
+    if (key.includes("damagefromplayers") || key.includes("defensefromplayers")) return "Extra protection against players. Useful for PvP-focused gear.";
+    if (key.includes("damagetomobs")) return "Extra damage against monsters and non-player enemies.";
+    if (key.includes("defensefrommobs")) return "Extra protection against monsters and non-player enemies.";
+    if (key.includes("damagetoanimals")) return "Extra damage against animals. Useful for hunting.";
+    if (key.includes("damagetoboss")) return "Extra damage against boss enemies.";
+    if (key.includes("defensefromboss")) return "Extra protection against boss enemies.";
+    if (key.includes("damagetoinsects") || key.includes("damagetocoldblooded")) return "Extra damage against that enemy family. Use it when hunting those specific targets.";
+    if (key.includes("plaguedamage")) return "Adds or modifies plague-type damage. Useful against targets affected by plague interactions.";
+    if (key.includes("negativeeffectchance")) return "Changes the chance of receiving negative effects. Higher avoidance/decrease values make debuffs less likely.";
+    if (key.includes("negativeeffecttime")) return "Reduces how long negative effects last on you.";
+    if (key.includes("ignorenextstun")) return "Chance to ignore the next stun after being stunned. Useful against enemies or players with stun effects.";
+    if (key.includes("ignorenextslowdown")) return "Chance to ignore the next slow after being slowed. Useful for staying mobile.";
+    if (key.includes("stundefence") || key.includes("slowdowndefence")) return "Protection against stun or slowdown effects.";
+    if (key.includes("poisonattacker") || key.includes("infectattacker")) return "Can punish enemies that hit you by applying poison or infection back to them.";
+    if (key.includes("resistpoisoning") || key.includes("resistburning")) return "Improves resistance to the listed damage-over-time effect.";
+    if (key.includes("cooldown")) return "Reduces ability cooldowns, letting you use skills more often.";
+    if (key.includes("movingspeedup")) return "Increases movement speed. Useful for travel, kiting, and escaping danger.";
+    if (key.includes("movingspeeddown")) return "Reduces movement speed while equipped. This is usually a tradeoff for storage or protection.";
+    if (key.includes("pet")) return "Affects pets: experience, max level, feeding, or pet-related actions depending on the label.";
+    if (category.includes("equipment") || category.includes("weapon")) {
+      return "Gear stat. Compare this value with similar items to decide which item better fits your build.";
+    }
+    if (category.includes("consumable") || itemText.includes("potion") || itemText.includes("food")) {
+      return "Consumable effect. Use it to decide when this food, drink, or potion is worth consuming.";
+    }
+    return "Item value. Use it for comparison with similar items and to understand what the item changes in play.";
+  }
+
+  function statKey(value) {
+    return String(value || "").toLocaleLowerCase().replace(/[^a-z0-9]+/g, "");
   }
 
   function itemStatTooltipLines(itemId) {
