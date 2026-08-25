@@ -6,6 +6,7 @@
   const recipes = data.recipes || [];
   const items = data.items || {};
   const sourcesByItem = data.sourcesByItem || {};
+  const fortificationData = data.fortification || {};
   const wikiEntries = wikiData.entries || [];
   const itemEconomy = wikiData.itemEconomy || {};
   const shopsByItem = wikiData.shopsByItem || {};
@@ -67,6 +68,12 @@
     "PoisonProjectilePotion",
     "WeaknessPotion",
   ]);
+  const petDpsRollDefinitions = [
+    { key: "damage", label: "Pet damage", metricLabel: "Damage rolls", pattern: /\bPet damage\s*\+([\d.]+)/i, percent: false },
+    { key: "attackSpeed", label: "Pet attack speed", metricLabel: "Attack speed rolls", pattern: /\bPet attack speed\s*\+([\d.]+)\s*%/i, percent: true },
+    { key: "critChance", label: "Pet crit chance", metricLabel: "Crit chance rolls", pattern: /\bPet crit chance\s*\+([\d.]+)\s*%/i, percent: true },
+    { key: "critDamage", label: "Pet crit damage", metricLabel: "Crit damage rolls", pattern: /\bPet crit damage\s*\+([\d.]+)\s*%/i, percent: true },
+  ];
 
   for (const entry of wikiEntries) {
     if (entry.type !== "area") continue;
@@ -2191,8 +2198,9 @@
 
   function formatSignedPercent(value) {
     const pct = Number((value * 100).toFixed(2));
+    if (!Number.isFinite(pct)) return "0%";
     const text = Number.isInteger(pct) ? String(pct) : pct.toFixed(2).replace(/\.?0+$/, "");
-    return `${pct >= 0 ? "+" : ""}${text}%`;
+    return `${pct > 0 ? "+" : ""}${text}%`;
   }
 
   function scaledWeaponPoisonStatsBySlot(selectedIds, confirmed) {
@@ -3086,6 +3094,14 @@
       if (overview) article.appendChild(overview);
     }
 
+    if (entry.type === "feature") {
+      const overview = renderFeatureOverview(entry);
+      if (overview) article.appendChild(overview);
+      if (entry.id === "feature:fortification") {
+        article.appendChild(renderFortificationSimulator());
+      }
+    }
+
     const statBlock = renderWikiStats(publicStats(entry));
     if (statBlock) article.appendChild(statBlock);
 
@@ -3145,6 +3161,8 @@
     for (const table of entry.tables || []) {
       if (entry.type === "shop" && isShopItemsTable(table)) {
         article.appendChild(renderShopItemsTable(table));
+      } else if (entry.type === "feature" && table.title === "Bonus pools") {
+        article.appendChild(renderFeatureBonusFinder(entry, table));
       } else {
         article.appendChild(renderWikiTable(table));
       }
@@ -3214,6 +3232,526 @@
     wrap.appendChild(details);
     block.appendChild(wrap);
     return block;
+  }
+
+  function renderFeatureOverview(entry) {
+    const block = sectionBlock("Feature overview");
+    const wrap = document.createElement("div");
+    wrap.className = "wiki-overview-card feature-overview-card";
+    const icon = renderWikiIcon(entry, "large");
+    icon.classList.add("wiki-overview-icon");
+    wrap.appendChild(icon);
+
+    const details = document.createElement("div");
+    details.className = "wiki-overview-body";
+    const rows = Object.entries(entry.stats || {})
+      .filter(([, value]) => value !== "" && value !== null && value !== undefined)
+      .slice(0, 6);
+    details.innerHTML = rows.map(([label, value]) => `
+      <span>
+        <small>${escapeHtml(label)}</small>
+        <strong>${escapeHtml(value)}</strong>
+      </span>
+    `).join("");
+    wrap.appendChild(details);
+    block.appendChild(wrap);
+
+    const notes = featurePlayerNotes(entry);
+    if (notes.length) {
+      const list = document.createElement("div");
+      list.className = "feature-note-list";
+      for (const note of notes) {
+        const row = document.createElement("div");
+        row.className = "feature-note";
+        row.innerHTML = `
+          <strong>${escapeHtml(note.title)}</strong>
+          <p>${escapeHtml(note.text)}</p>
+        `;
+        list.appendChild(row);
+      }
+      block.appendChild(list);
+    }
+
+    return block;
+  }
+
+  function featurePlayerNotes(entry) {
+    if (entry.id === "feature:fortification") {
+      return [
+        {
+          title: "Exact milestone odds",
+          text: "Every slot in a milestone pool has equal weight: 1 in 17 at +10 and 1 in 13 at +20. Health appears three times with different values, so Health is more common as a category.",
+        },
+        {
+          title: "+20 Master interaction",
+          text: "One +20 slot copies the armor's existing Master bonus. If the armor has no Master bonus, the game rolls one from the matching heavy or light armor Master pool and scales it by the required skill level.",
+        },
+      ];
+    }
+    if (entry.id === "feature:oath") {
+      return [
+        {
+          title: "Oath variants",
+          text: "Oath weapons are grouped here so players can search the local item variants and open each weapon directly.",
+        },
+      ];
+    }
+    if (entry.id === "feature:shattered-castle") {
+      return [
+        {
+          title: "Detected update items",
+          text: "This page groups Shattered Castle items detected in the current local files.",
+        },
+      ];
+    }
+    return [];
+  }
+
+  function renderFortificationSimulator() {
+    const block = sectionBlock("Fortification simulator");
+    const wrap = document.createElement("div");
+    wrap.className = "planner-card fortification-simulator";
+    wrap.innerHTML = `
+      <div class="fortification-simulator-head">
+        <div><strong>Armor Fortification</strong><span>Choose armor and prepare the next attempt.</span></div>
+        <button class="icon-button fortification-reset" type="button" title="Reset simulation" aria-label="Reset simulation">↻</button>
+      </div>
+      <div class="fortification-workbench">
+        <button class="fortification-slot fortification-armor-slot is-empty" type="button"></button>
+        <span class="fortification-flow-arrow">+</span>
+        <div class="fortification-slot fortification-kit-slot"></div>
+        <span class="fortification-flow-arrow">→</span>
+        <div class="fortification-result-slot"></div>
+      </div>
+      <div class="planner-yields fortification-simulator-metrics"></div>
+      <div class="fortification-options">
+        <button class="fortification-consumable" data-option="oil" type="button"></button>
+        <button class="fortification-consumable is-active" data-protection="none" type="button"><span class="fortification-option-fallback">—</span><strong>No protection</strong><small>Failure resets level and durability</small></button>
+        <button class="fortification-consumable" data-protection="thread" type="button"></button>
+        <button class="fortification-consumable" data-protection="seal" type="button"></button>
+      </div>
+      <div class="fortification-item-settings">
+        <label><span>Armor type</span><select class="fortification-armor-class"><option value="heavy">Heavy armor</option><option value="light">Light armor</option></select></label>
+        <label><span>Required skill</span><input class="fortification-required-skill" type="number" min="0" max="60" value="0"></label>
+        <label><span>Existing Master bonus</span><select class="fortification-master-bonus"><option value="">No Master bonus</option></select></label>
+        <label><span>Master value %</span><input class="fortification-master-value" type="number" min="0" max="100" step="0.01" value="0" disabled></label>
+      </div>
+      <div class="fortification-actions">
+        <button class="primary-action fortification-attempt" type="button" disabled>Choose armor</button>
+        <button class="secondary-action fortification-repair" type="button" hidden>Repair armor</button>
+        <span class="fortification-attempt-status">Select a light or heavy armor piece.</span>
+      </div>
+      <div class="fortification-current-perks"></div>
+      <div class="fortification-history"></div>
+      <div class="fortification-picker">
+        <label class="feature-bonus-search"><span>Armor inventory</span><input type="search" autocomplete="off" placeholder="Search armor..."></label>
+        <div class="fortification-armor-grid"></div>
+      </div>
+      <div class="fortification-odds"></div>
+    `;
+
+    const q = (selector) => wrap.querySelector(selector);
+    const armorSlot = q(".fortification-armor-slot");
+    const kitSlot = q(".fortification-kit-slot");
+    const resultSlot = q(".fortification-result-slot");
+    const metrics = q(".fortification-simulator-metrics");
+    const armorClassInput = q(".fortification-armor-class");
+    const requiredSkillInput = q(".fortification-required-skill");
+    const masterBonusInput = q(".fortification-master-bonus");
+    const masterValueInput = q(".fortification-master-value");
+    const attemptButton = q(".fortification-attempt");
+    const repairButton = q(".fortification-repair");
+    const status = q(".fortification-attempt-status");
+    const perks = q(".fortification-current-perks");
+    const history = q(".fortification-history");
+    const picker = q(".fortification-picker");
+    const pickerSearch = picker.querySelector("input");
+    const armorGrid = q(".fortification-armor-grid");
+    const oilButton = q('[data-option="oil"]');
+    const protectionButtons = Array.from(wrap.querySelectorAll("[data-protection]"));
+    const sim = { armorId: "", level: 0, durability: 100, bonuses: [], useOil: false, protection: "none", attempts: 0, kits: 0, log: [] };
+    const armorCandidates = fortificationArmorItems();
+
+    const renderPicker = () => {
+      const query = normalize(pickerSearch.value);
+      const matches = armorCandidates.filter((item) => !query || normalize(`${item.name} ${item.id} ${fortificationItemSlot(item.id)}`).includes(query));
+      armorGrid.innerHTML = "";
+      for (const item of matches) {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.className = `fortification-armor-card${sim.armorId === item.id ? " is-selected" : ""}`;
+        card.appendChild(renderInlineImage(item.icon, item.name, "AR"));
+        const body = document.createElement("span");
+        const skill = fortificationRequiredSkill(item.id);
+        body.innerHTML = `<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(fortificationArmorClass(item.id))} · ${escapeHtml(fortificationItemSlot(item.id))}${skill ? ` · level ${skill}` : ""}</small>`;
+        card.appendChild(body);
+        card.addEventListener("click", () => selectArmor(item.id));
+        armorGrid.appendChild(card);
+      }
+      if (!matches.length) armorGrid.innerHTML = '<div class="empty-note">No fortifiable armor matched this search.</div>';
+    };
+
+    const renderMasterOptions = () => {
+      const rows = fortificationData.masterPools?.[armorClassInput.value] || [];
+      const unique = new Map();
+      for (const row of rows) if (!unique.has(row.id)) unique.set(row.id, row);
+      const previous = masterBonusInput.value;
+      masterBonusInput.innerHTML = '<option value="">No Master bonus</option>' + Array.from(unique.values()).map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.name)}</option>`).join("");
+      if (unique.has(previous)) masterBonusInput.value = previous;
+      masterValueInput.disabled = !masterBonusInput.value;
+    };
+
+    const selectArmor = (itemId) => {
+      sim.armorId = itemId; sim.level = 0; sim.durability = 100; sim.bonuses = []; sim.log = [];
+      armorClassInput.value = fortificationArmorClass(itemId).startsWith("Light") ? "light" : "heavy";
+      requiredSkillInput.value = String(fortificationRequiredSkill(itemId));
+      masterBonusInput.value = ""; masterValueInput.value = "0";
+      picker.classList.remove("is-open");
+      renderMasterOptions(); renderPicker(); update();
+    };
+
+    const addLog = (tone, title, detail) => {
+      sim.log.unshift({ tone, title, detail });
+      sim.log = sim.log.slice(0, 8);
+    };
+
+    const attempt = () => {
+      if (!sim.armorId || sim.level >= 20 || sim.durability < 100) return;
+      const nextLevel = sim.level + 1;
+      const safe = nextLevel <= Number(fortificationData.safeSuccessLevel || 2);
+      const chance = safe ? 1 : sim.useOil ? Number(fortificationData.temperingOilSuccessChance || 0.75) : Number(fortificationData.successChance || 0.7);
+      const roll = fortificationRandom();
+      const success = roll < chance;
+      sim.attempts += 1; sim.kits += 1; sim.useOil = false;
+      if (success) {
+        sim.level = nextLevel;
+        let detail = `Roll ${(roll * 100).toFixed(2)}% against ${(chance * 100).toFixed(0)}%.`;
+        if ((nextLevel === 10 || nextLevel === 20) && fortificationHasMilestoneSlot(sim.armorId)) {
+          const bonus = rollFortificationMilestone(nextLevel, armorClassInput.value, Number(requiredSkillInput.value), masterBonusInput.value, Number(masterValueInput.value));
+          if (bonus) { sim.bonuses.push(bonus); detail += ` Milestone: ${bonus.name} ${formatFortificationBonus(bonus)}.`; }
+        }
+        addLog("success", `Fortified to +${nextLevel}`, detail);
+      } else if (sim.protection === "seal") {
+        sim.protection = "none";
+        addLog("protected", `Failed at +${nextLevel}`, "Mirror Armor Seal preserved durability, level, and milestone bonuses.");
+      } else {
+        const thread = sim.protection === "thread";
+        sim.protection = "none"; sim.level = 0; sim.bonuses = []; sim.durability = thread ? 100 : 0;
+        addLog("failure", `Failed at +${nextLevel}`, thread ? "Castle Ward Thread preserved durability; level and milestone bonuses were reset." : "Level, milestone bonuses, and durability were reset.");
+      }
+      update();
+    };
+
+    const update = () => {
+      const item = sim.armorId ? itemRecord(sim.armorId) : null;
+      const skill = clamp(Math.floor(Number(requiredSkillInput.value) || 0), 0, 60);
+      requiredSkillInput.value = String(skill);
+      const kit = itemRecord(fortificationKitForSkill(skill));
+      const nextLevel = Math.min(20, sim.level + 1);
+      const safe = nextLevel <= Number(fortificationData.safeSuccessLevel || 2);
+      const chance = safe ? 1 : sim.useOil ? Number(fortificationData.temperingOilSuccessChance || 0.75) : Number(fortificationData.successChance || 0.7);
+      armorSlot.classList.toggle("is-empty", !item);
+      armorSlot.innerHTML = item ? `${fortificationImageHtml(item)}<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(fortificationItemSlot(item.id))} · 100% durability</small>` : '<span class="fortification-empty-plus">+</span><strong>Choose armor</strong><small>Click to place an item</small>';
+      kitSlot.innerHTML = `${fortificationImageHtml(kit)}<strong>${escapeHtml(kit.name)}</strong><small>Required skill ${skill}</small>`;
+      resultSlot.innerHTML = `<strong>+${sim.level}</strong><span>${sim.durability}% durability</span>`;
+      resultSlot.classList.toggle("is-broken", sim.durability < 100);
+      metrics.innerHTML = `<span><small>Next success</small><strong>${sim.level >= 20 ? "Complete" : `${(chance * 100).toFixed(0)}%`}</strong></span><span><small>Damage reduction</small><strong>-${escapeHtml(formatCompactNumber(fortificationFlatDamageReduction(sim.level)))}</strong></span><span><small>Insensitivity</small><strong>${escapeHtml(formatSignedPercent(fortificationInsensitivityBonus(sim.level)))}</strong></span><span><small>Kits used</small><strong>${sim.kits}</strong></span>`;
+      oilButton.classList.toggle("is-active", sim.useOil);
+      oilButton.innerHTML = fortificationConsumableHtml("ShatteredTemperingOil", "75% next attempt", sim.useOil);
+      for (const button of protectionButtons) button.classList.toggle("is-active", button.dataset.protection === sim.protection);
+      q('[data-protection="thread"]').innerHTML = fortificationConsumableHtml("CastleWardThread", "Preserve durability on failure", sim.protection === "thread");
+      q('[data-protection="seal"]').innerHTML = fortificationConsumableHtml("MirrorArmorSeal", "Preserve everything on failure", sim.protection === "seal");
+      attemptButton.disabled = !item || sim.level >= 20 || sim.durability < 100;
+      attemptButton.textContent = !item ? "Choose armor" : sim.level >= 20 ? "Maximum +20" : sim.durability < 100 ? "Repair required" : `Fortify to +${nextLevel} · ${(chance * 100).toFixed(0)}%`;
+      repairButton.hidden = sim.durability >= 100;
+      status.textContent = fortificationAttemptHelp(item, sim, safe);
+      perks.innerHTML = sim.bonuses.length ? `<strong>Milestone bonuses</strong><div>${sim.bonuses.map((bonus) => `<span><small>${escapeHtml(bonus.source)}</small><b>${escapeHtml(bonus.name)} ${escapeHtml(formatFortificationBonus(bonus))}</b></span>`).join("")}</div>` : `<strong>Milestone bonuses</strong><p>${fortificationMilestoneHelp(sim.armorId)}</p>`;
+      history.innerHTML = sim.log.length ? `<strong>Attempt history</strong>${sim.log.map((row) => `<div class="fortification-log is-${row.tone}"><b>${escapeHtml(row.title)}</b><span>${escapeHtml(row.detail)}</span></div>`).join("")}` : "";
+    };
+
+    armorSlot.addEventListener("click", () => picker.classList.toggle("is-open"));
+    pickerSearch.addEventListener("input", renderPicker);
+    oilButton.addEventListener("click", () => { sim.useOil = !sim.useOil; update(); });
+    for (const button of protectionButtons) button.addEventListener("click", () => { sim.protection = button.dataset.protection || "none"; update(); });
+    armorClassInput.addEventListener("change", () => { renderMasterOptions(); update(); });
+    requiredSkillInput.addEventListener("input", update);
+    masterBonusInput.addEventListener("change", () => {
+      masterValueInput.disabled = !masterBonusInput.value;
+      const row = (fortificationData.masterPools?.[armorClassInput.value] || []).find((item) => item.id === masterBonusInput.value);
+      masterValueInput.value = masterBonusInput.value ? String(Number((fortificationScaledMasterValue(row?.value || 0, Number(requiredSkillInput.value)) * 100).toFixed(2))) : "0";
+      update();
+    });
+    masterValueInput.addEventListener("input", update);
+    attemptButton.addEventListener("click", attempt);
+    repairButton.addEventListener("click", () => { sim.durability = 100; addLog("protected", "Armor repaired", "Durability restored to 100%."); update(); });
+    q(".fortification-reset").addEventListener("click", () => { sim.level = 0; sim.durability = 100; sim.bonuses = []; sim.useOil = false; sim.protection = "none"; sim.attempts = 0; sim.kits = 0; sim.log = []; update(); });
+    q(".fortification-odds").appendChild(renderFortificationOdds());
+    renderMasterOptions(); renderPicker(); update();
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function fortificationArmorItems() {
+    const armorSlots = new Set(["Chest", "Shoulders", "Head", "Feet", "Hands", "Legs"]);
+    return Object.values(items)
+      .filter((item) => {
+        const rows = item.statDetails?.rows || [];
+        const slot = rows.find((row) => row.label === "Slot")?.value;
+        const hasDurability = rows.some((row) => row.label === "Durability");
+        const hasArmorStat = rows.some((row) => row.label === "Defense" || row.label === "Absorption" || row.label === "Dodge");
+        return item.maxStack === 1 && armorSlots.has(slot) && hasDurability && hasArmorStat;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function fortificationItemStat(itemId, label) {
+    return itemRecord(itemId).statDetails?.rows?.find((row) => row.label === label)?.value || "";
+  }
+
+  function fortificationItemSlot(itemId) {
+    return fortificationItemStat(itemId, "Slot") || "Armor";
+  }
+
+  function fortificationArmorClass(itemId) {
+    const rows = itemRecord(itemId).statDetails?.rows || [];
+    return rows.some((row) => row.label === "Dodge" || row.label === "Dodge skill") ? "Light armor" : "Heavy armor";
+  }
+
+  function fortificationRequiredSkill(itemId) {
+    const match = String(fortificationItemStat(itemId, "Required skill")).match(/\d+/);
+    return match ? clamp(Number(match[0]), 0, 60) : 0;
+  }
+
+  function fortificationKitForSkill(skill) {
+    const tiers = fortificationData.kitTiers || [];
+    return tiers.find((tier) => skill >= tier.minSkill && skill <= tier.maxSkill)?.itemId || tiers[tiers.length - 1]?.itemId || "ReinforcementKitMaster";
+  }
+
+  function fortificationHasMilestoneSlot(itemId) {
+    return itemId && /^(Chest|Legs)$/.test(fortificationItemSlot(itemId));
+  }
+
+  function fortificationRandom() {
+    if (globalThis.crypto?.getRandomValues) {
+      const value = new Uint32Array(1);
+      globalThis.crypto.getRandomValues(value);
+      return value[0] / 4294967296;
+    }
+    return Math.random();
+  }
+
+  function fortificationRandomEntry(rows) {
+    return rows?.length ? rows[Math.floor(fortificationRandom() * rows.length)] : null;
+  }
+
+  function fortificationScaledMasterValue(baseValue, requiredSkill) {
+    return Math.max(0.01, Number(baseValue || 0) * clamp(Number(requiredSkill) || 0, 0, 60) / 50);
+  }
+
+  function rollFortificationMilestone(level, armorClass, requiredSkill, masterBonusId, masterValuePercent) {
+    const row = fortificationRandomEntry(fortificationData.milestonePools?.[String(level)] || []);
+    if (!row) return null;
+    if (row.id !== "__FortificationCopyMasterMark") return { ...row, source: `+${level} pool` };
+    if (masterBonusId) {
+      const allMasterRows = [...(fortificationData.masterPools?.heavy || []), ...(fortificationData.masterPools?.light || [])];
+      const known = allMasterRows.find((item) => item.id === masterBonusId);
+      return { id: masterBonusId, name: known?.name || masterBonusId, value: Math.max(0, Number(masterValuePercent) || 0) / 100, format: "percent", source: "+20 copied Master" };
+    }
+    const masterRow = fortificationRandomEntry(fortificationData.masterPools?.[armorClass] || []);
+    if (!masterRow) return null;
+    return { ...masterRow, value: fortificationScaledMasterValue(masterRow.value, requiredSkill), source: `+20 random ${armorClass} Master` };
+  }
+
+  function formatFortificationBonus(row) {
+    if (!row || row.format === "special") return "";
+    if (row.format === "flat") return `+${formatCompactNumber(row.value)}`;
+    return `+${formatCompactNumber(Number(row.value || 0) * 100)}%`;
+  }
+
+  function fortificationImageHtml(item) {
+    return item?.icon ? `<img src="${escapeHtml(item.icon)}" alt="">` : '<span class="fortification-option-fallback">?</span>';
+  }
+
+  function fortificationConsumableHtml(itemId, detail, active) {
+    const item = itemRecord(itemId);
+    return `${fortificationImageHtml(item)}<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(detail)}</small>${active ? '<span class="fortification-selected-mark">Selected</span>' : ""}`;
+  }
+
+  function fortificationAttemptHelp(item, sim, safe) {
+    if (!item) return "Select a light or heavy armor piece.";
+    if (sim.durability < 100) return "The game requires full durability before another fortification attempt.";
+    if (sim.level >= 20) return "This armor has reached the maximum Fortification level.";
+    if (safe) return "This attempt is safe. The reinforcement kit is still consumed.";
+    if (sim.protection === "seal") return "Failure will preserve level, milestone bonuses, and durability.";
+    if (sim.protection === "thread") return "Failure will reset level and bonuses but preserve durability.";
+    return "Failure will reset Fortification, milestone bonuses, and durability.";
+  }
+
+  function fortificationMilestoneHelp(itemId) {
+    if (!itemId) return "Choose chest or legs to simulate random milestone perks.";
+    return fortificationHasMilestoneSlot(itemId) ? "Chest and legs receive one random bonus at +10 and another at +20." : "This armor slot receives the fixed Fortification stats, but no +10/+20 random perk.";
+  }
+
+  function renderFortificationOdds() {
+    const section = document.createElement("section");
+    section.className = "fortification-odds-section";
+    section.innerHTML = '<div class="fortification-odds-head"><strong>Exact milestone pools</strong><span>Every row is one equally weighted array slot.</span></div>';
+    const grid = document.createElement("div");
+    grid.className = "fortification-odds-grid";
+    for (const level of [10, 20]) {
+      const rows = fortificationData.milestonePools?.[String(level)] || [];
+      const chance = rows.length ? 100 / rows.length : 0;
+      const card = document.createElement("div");
+      card.className = "fortification-odds-card";
+      card.innerHTML = `<div class="fortification-odds-title"><strong>+${level} bonus pool</strong><span>${rows.length} slots · ${chance.toFixed(2)}% each</span></div><div class="fortification-odds-list">${rows.map((row) => `<span><b>${escapeHtml(row.name)}</b><em>${escapeHtml(formatFortificationBonus(row) || "Copies or rolls a Master bonus")}</em><small>${chance.toFixed(2)}%</small></span>`).join("")}</div>`;
+      grid.appendChild(card);
+    }
+    section.appendChild(grid);
+    const note = document.createElement("p");
+    note.className = "fortification-odds-note";
+    note.textContent = "Health has three separate slots: 17.65% total at +10 and 23.08% at +20. Copy Master occupies one +20 slot (7.69%).";
+    section.appendChild(note);
+    return section;
+  }
+
+  function fortificationFlatDamageReduction(level) {
+    const capped = clamp(Math.floor(Number(level) || 0), 0, 20);
+    let value = clamp(capped, 0, 10) * 0.1;
+    for (let threshold = 12; threshold <= capped; threshold += 2) {
+      value += 0.2;
+    }
+    return value;
+  }
+
+  function fortificationInsensitivityBonus(level) {
+    const capped = clamp(Math.floor(Number(level) || 0), 0, 20);
+    let value = 0;
+    for (let threshold = 11; threshold <= capped; threshold += 2) {
+      value += 0.0025;
+    }
+    return value;
+  }
+
+  function renderFeatureBonusFinder(entry, table) {
+    const rows = table.rows || [];
+    const block = sectionBlock("Bonus finder", rows.length);
+    const wrap = document.createElement("div");
+    wrap.className = "planner-card feature-bonus-finder";
+
+    const categories = featureBonusCategories(rows);
+    let activeCategory = categories.some((category) => category.key === "armor") ? "armor" : "all";
+
+    const toolbar = document.createElement("div");
+    toolbar.className = "feature-bonus-toolbar";
+
+    const searchLabel = document.createElement("label");
+    searchLabel.className = "feature-bonus-search";
+    searchLabel.innerHTML = `
+      <span>Search bonus rolls</span>
+      <input type="search" autocomplete="off" placeholder="growth gather xp, stamina, damage, chest, pants...">
+    `;
+    const searchInput = searchLabel.querySelector("input");
+    toolbar.appendChild(searchLabel);
+
+    const tabs = document.createElement("div");
+    tabs.className = "feature-bonus-tabs";
+    const tabButtons = [];
+    for (const category of categories) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "filter-button feature-bonus-tab";
+      button.textContent = category.label;
+      button.dataset.category = category.key;
+      button.addEventListener("click", () => {
+        activeCategory = category.key;
+        update();
+      });
+      tabButtons.push(button);
+      tabs.appendChild(button);
+    }
+    toolbar.appendChild(tabs);
+    wrap.appendChild(toolbar);
+
+    const status = document.createElement("div");
+    status.className = "feature-bonus-status";
+    wrap.appendChild(status);
+
+    const tableWrap = document.createElement("div");
+    tableWrap.className = "wiki-table-wrap feature-bonus-table-wrap";
+    wrap.appendChild(tableWrap);
+
+    const update = () => {
+      const query = normalize(searchInput.value);
+      const category = categories.find((item) => item.key === activeCategory) || categories[0];
+      for (const button of tabButtons) {
+        button.classList.toggle("is-active", button.dataset.category === activeCategory);
+      }
+
+      const matching = rows
+        .filter((row) => category?.test(row) ?? true)
+        .filter((row) => !query || featureBonusRowText(row).includes(query));
+      const limited = matching.slice(0, 220);
+      status.textContent = `${matching.length} matching bonus rows${matching.length > limited.length ? `, showing ${limited.length}` : ""}`;
+
+      if (!limited.length) {
+        tableWrap.innerHTML = `<div class="empty-note">No bonus rows matched this search.</div>`;
+        return;
+      }
+
+      tableWrap.innerHTML = `
+        <table class="wiki-table feature-bonus-table">
+          <thead>
+            <tr>
+              <th>Group</th>
+              <th>Bonus</th>
+              <th>Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${limited.map((row) => `
+              <tr>
+                <td>${escapeHtml(row.group || "")}</td>
+                <td>${escapeHtml(row.bonus || row.raw || "")}</td>
+                <td>${escapeHtml(row.value || "")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      `;
+    };
+
+    searchInput.addEventListener("input", update);
+    update();
+
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function featureBonusCategories(rows) {
+    const definitions = [
+      { key: "armor", label: "Armor", test: (row) => /\bArmor\b/i.test(row.group || "") },
+      { key: "weapon", label: "Weapons", test: (row) => /\bWeapon\b/i.test(row.group || "") },
+      { key: "shield", label: "Shields", test: (row) => /\bShield\b/i.test(row.group || "") },
+      { key: "jewelry", label: "Jewelry", test: (row) => /\b(Amulet|Ring|Necklace|Belt)\b/i.test(row.group || "") },
+      { key: "all", label: "All", test: () => true },
+    ];
+    return definitions.filter((definition) => definition.key === "all" || rows.some(definition.test));
+  }
+
+  function featureBonusRowText(row) {
+    const raw = String(row.raw || row.bonus || "");
+    const aliases = [];
+    if (/AbilityFreeStaminaChance/i.test(raw)) aliases.push("saving stamina on abilities save stamina ability");
+    if (/GatherSkillsAddXPGain/i.test(raw)) aliases.push("growth gather xp gathering growth");
+    if (/Insensitivity/i.test(raw)) aliases.push("incoming damage reduction insensitivity");
+    if (/Fortification/i.test(raw)) aliases.push("fortification milestone armor chest pants");
+    return normalize([
+      row.group,
+      row.bonus,
+      row.value,
+      row.raw,
+      ...aliases,
+    ].filter(Boolean).join(" "));
   }
 
   function renderMapRegions(entry) {
@@ -3392,9 +3930,7 @@
     const mapEntry = (entry.type === "creature" || entry.type === "fish") && list.title === "Found in"
       ? mapEntryForLabel(item)
       : null;
-    const linkedItemId = entry.type === "fish" && list.title === "Baits"
-      ? itemIdForLabel(item)
-      : null;
+    const linkedItemId = mapEntry ? null : itemIdForLabel(item);
 
     if (linkedItemId) {
       const chip = document.createElement("button");
@@ -4166,6 +4702,12 @@
       update(1);
       block.appendChild(wrap);
       fragment.appendChild(block);
+
+      const dpsBlock = renderPetDpsPlanner(entry);
+      if (dpsBlock) fragment.appendChild(dpsBlock);
+
+      const abilitySearchBlock = renderPetAbilitySearch(entry);
+      if (abilitySearchBlock) fragment.appendChild(abilitySearchBlock);
     }
 
     if (homeAnimals.length) {
@@ -4191,6 +4733,275 @@
     }
 
     return fragment;
+  }
+
+  function renderPetDpsPlanner(entry) {
+    const pets = (entry.pets || [])
+      .filter((pet) => {
+        const levels = pet.levels || {};
+        return Number(levels.maxDamage?.max || levels.maxDamage?.base || 0) > 0 || petDpsSelectableSlots(pet).length;
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!pets.length) return null;
+
+    const block = sectionBlock("Pet DPS calculator");
+    const wrap = document.createElement("div");
+    wrap.className = "planner-card pet-dps-planner";
+
+    const controls = document.createElement("div");
+    controls.className = "planner-controls pet-dps-controls";
+    const petDropdown = createPlannerDropdown("Pet", pets, (pet) => pet.id, (pet) => pet.name);
+    controls.appendChild(petDropdown.root);
+
+    const levelLabel = document.createElement("label");
+    levelLabel.className = "pet-dps-field";
+    levelLabel.innerHTML = `
+      <span>Pet level</span>
+      <input class="pet-dps-level" type="number" min="1" value="1">
+    `;
+    const levelInput = levelLabel.querySelector("input");
+    controls.appendChild(levelLabel);
+    wrap.appendChild(controls);
+
+    const rollGrid = document.createElement("div");
+    rollGrid.className = "pet-dps-roll-grid";
+    const rollInputs = new Map();
+    for (const definition of petDpsRollDefinitions) {
+      const label = document.createElement("label");
+      label.className = "pet-dps-field";
+      label.innerHTML = `
+        <span>${escapeHtml(definition.metricLabel)}</span>
+        <input type="number" min="0" step="1" value="0" inputmode="numeric">
+      `;
+      const input = label.querySelector("input");
+      rollInputs.set(definition.key, input);
+      rollGrid.appendChild(label);
+    }
+    wrap.appendChild(rollGrid);
+
+    const result = document.createElement("div");
+    result.className = "planner-result pet-dps-result";
+    wrap.appendChild(result);
+
+    const update = () => {
+      const pet = pets.find((item) => item.id === petDropdown.value()) || pets[0];
+      const levels = pet.levels || {};
+      const maxLevel = Number(levels.maxLevel) || 1;
+      levelInput.max = String(maxLevel);
+      const level = clamp(Number(levelInput.value) || 1, 1, maxLevel);
+      if (String(levelInput.value) !== String(level)) levelInput.value = String(level);
+
+      const rollValues = petDpsRollValuesByType(pet);
+      const selectedCounts = {};
+      for (const definition of petDpsRollDefinitions) {
+        const input = rollInputs.get(definition.key);
+        const maxCount = rollValues[definition.key].length;
+        input.max = String(maxCount);
+        const count = clamp(Math.floor(Number(input.value) || 0), 0, maxCount);
+        if (String(input.value) !== String(count)) input.value = String(count);
+        selectedCounts[definition.key] = count;
+      }
+
+      const minDamage = statAtLevel(levels.minDamage?.base, levels.minDamage?.max, level, maxLevel);
+      const maxDamage = statAtLevel(levels.maxDamage?.base, levels.maxDamage?.max, level, maxLevel);
+      const baseAverage = (minDamage + maxDamage) / 2;
+      const bonusDamage = petDpsRollSum(rollValues.damage, selectedCounts.damage);
+      const attackSpeed = petDpsRollSum(rollValues.attackSpeed, selectedCounts.attackSpeed);
+      const critChance = petDpsRollSum(rollValues.critChance, selectedCounts.critChance);
+      const critDamage = petDpsRollSum(rollValues.critDamage, selectedCounts.critDamage);
+      const damageAfterRolls = baseAverage + bonusDamage;
+      const attackSpeedMultiplier = 1 + attackSpeed;
+      const critMultiplier = 1 + (critChance * critDamage);
+      const dpsScore = damageAfterRolls * attackSpeedMultiplier * critMultiplier;
+      const baseScore = Math.max(0, baseAverage);
+      const selectedTotal = Object.values(selectedCounts).reduce((sum, count) => sum + count, 0);
+      const selectableSlots = petDpsSelectableSlots(pet);
+      const maxSelectable = selectableSlots.length;
+      const slotWarning = selectedTotal > maxSelectable
+        ? `<p class="pet-dps-warning">Selected DPS rolls exceed the ${maxSelectable} selectable DPS roll level${maxSelectable === 1 ? "" : "s"} found for this pet. Lower one of the roll counts for an in-game possible setup.</p>`
+        : "";
+
+      result.innerHTML = `
+        <div class="planner-summary pet-dps-summary">
+          ${renderInlineDataIcon(pet.icon, pet.name)}
+          <span>
+            <strong>${escapeHtml(pet.name)}</strong>
+            <small>${escapeHtml(maxSelectable ? `${maxSelectable} DPS roll levels detected` : "No DPS roll levels detected")}</small>
+          </span>
+        </div>
+        <div class="planner-yields pet-dps-metrics">
+          <span><small>base damage</small><strong>${escapeHtml(formatPetStat(minDamage))}-${escapeHtml(formatPetStat(maxDamage))}</strong></span>
+          <span><small>bonus damage</small><strong>${escapeHtml(signedNumberOrZero(bonusDamage))}</strong></span>
+          <span><small>attack speed</small><strong>${escapeHtml(formatSignedPercent(attackSpeed))}</strong></span>
+          <span><small>crit score</small><strong>${escapeHtml(`${formatSignedPercent(critChance)} x ${formatSignedPercent(critDamage)}`)}</strong></span>
+          <span><small>DPS score</small><strong>${escapeHtml(formatCompactNumber(dpsScore))}</strong></span>
+          <span><small>gain vs base</small><strong>${escapeHtml(baseScore ? formatSignedPercent((dpsScore / baseScore) - 1) : "no base damage")}</strong></span>
+        </div>
+        ${slotWarning}
+        <div class="pet-dps-slots">
+          ${selectableSlots.length ? selectableSlots.map((slot) => `
+            <span>
+              <b>Level ${escapeHtml(slot.level || "?")}</b>
+              <em>${slot.choices.map((choice) => escapeHtml(choice.text)).join(" / ")}</em>
+            </span>
+          `).join("") : "<span><b>No DPS rolls</b><em>This pet has no local damage, attack speed, crit chance, or crit damage roll choices.</em></span>"}
+        </div>
+        <p class="pet-dps-note">This is a relative DPS score for comparing roll combinations on the same pet. Local files do not expose a confirmed attacks-per-second value for each pet.</p>
+      `;
+    };
+
+    petDropdown.onChange(update);
+    levelInput.addEventListener("input", update);
+    for (const input of rollInputs.values()) {
+      input.addEventListener("input", update);
+    }
+    update();
+
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function renderPetAbilitySearch(entry) {
+    const rows = petAbilityRows(entry.pets || []);
+    if (!rows.length) return null;
+
+    const block = sectionBlock("Pet ability rolls", rows.length);
+    const wrap = document.createElement("div");
+    wrap.className = "planner-card pet-ability-search-card";
+    const searchLabel = document.createElement("label");
+    searchLabel.className = "feature-bonus-search pet-ability-search";
+    searchLabel.innerHTML = `
+      <span>Search abilities by level roll</span>
+      <input type="search" autocomplete="off" placeholder="Taming growth 15%, pet attack speed, stun...">
+    `;
+    const searchInput = searchLabel.querySelector("input");
+    wrap.appendChild(searchLabel);
+
+    const status = document.createElement("div");
+    status.className = "feature-bonus-status";
+    wrap.appendChild(status);
+
+    const list = document.createElement("div");
+    list.className = "pet-ability-list";
+    wrap.appendChild(list);
+
+    const update = () => {
+      const query = normalize(searchInput.value);
+      const matching = rows.filter((row) => !query || petAbilityRowText(row).includes(query));
+      const limited = matching.slice(0, 180);
+      status.textContent = `${matching.length} matching pet rolls${matching.length > limited.length ? `, showing ${limited.length}` : ""}`;
+      list.innerHTML = "";
+
+      if (!limited.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-note";
+        empty.textContent = "No pet ability rolls matched this search.";
+        list.appendChild(empty);
+        return;
+      }
+
+      for (const row of limited) {
+        list.appendChild(renderPetAbilityRow(entry, row));
+      }
+    };
+
+    searchInput.addEventListener("input", update);
+    update();
+
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function renderPetAbilityRow(entry, row) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pet-ability-row";
+    button.dataset.petTooltipHtml = petTooltipHtml(row.pet, row.level);
+    button.appendChild(renderInlineImage(row.pet.icon, row.pet.name, "PT"));
+    const body = document.createElement("span");
+    body.innerHTML = `
+      <strong>${escapeHtml(row.pet.name)}</strong>
+      <small>Level ${escapeHtml(row.level)} · ${escapeHtml(row.detail)}</small>
+    `;
+    button.appendChild(body);
+    button.addEventListener("click", () => renderPetInspector(entry, row.pet, row.level));
+    return button;
+  }
+
+  function petAbilityRows(pets) {
+    const rows = [];
+    for (const pet of pets || []) {
+      for (const perk of pet.levels?.perks || []) {
+        for (const detail of perk.details || []) {
+          rows.push({
+            pet,
+            level: perk.level || "?",
+            detail,
+          });
+        }
+      }
+    }
+    return rows.sort((a, b) => {
+      const petDelta = a.pet.name.localeCompare(b.pet.name);
+      if (petDelta) return petDelta;
+      return Number(a.level || 0) - Number(b.level || 0) || a.detail.localeCompare(b.detail);
+    });
+  }
+
+  function petAbilityRowText(row) {
+    return normalize([
+      row.pet.name,
+      row.pet.id,
+      row.pet.itemId,
+      row.level,
+      row.detail,
+      row.pet.description,
+    ].filter(Boolean).join(" "));
+  }
+
+  function petDpsSelectableSlots(pet) {
+    const slots = [];
+    for (const perk of pet.levels?.perks || []) {
+      const choices = (perk.details || [])
+        .map(parsePetDpsRoll)
+        .filter(Boolean);
+      if (choices.length) {
+        slots.push({ level: perk.level, choices });
+      }
+    }
+    return slots;
+  }
+
+  function petDpsRollValuesByType(pet) {
+    const values = Object.fromEntries(petDpsRollDefinitions.map((definition) => [definition.key, []]));
+    for (const slot of petDpsSelectableSlots(pet)) {
+      for (const choice of slot.choices) {
+        values[choice.key].push(choice.value);
+      }
+    }
+    for (const key of Object.keys(values)) {
+      values[key].sort((a, b) => b - a);
+    }
+    return values;
+  }
+
+  function parsePetDpsRoll(detail) {
+    for (const definition of petDpsRollDefinitions) {
+      const match = String(detail || "").match(definition.pattern);
+      if (!match) continue;
+      const raw = Number(match[1]) || 0;
+      return {
+        key: definition.key,
+        label: definition.label,
+        value: definition.percent ? raw / 100 : raw,
+        text: detail,
+      };
+    }
+    return null;
+  }
+
+  function petDpsRollSum(values, count) {
+    return (values || []).slice(0, count).reduce((sum, value) => sum + (Number(value) || 0), 0);
   }
 
   function renderPetCard(pet, onSelect) {
@@ -5673,6 +6484,7 @@
       shop: "SH",
       quest: "QT",
       skill: "SK",
+      feature: "FT",
       farming: "FM",
       pet: "PT",
     };
@@ -6103,7 +6915,7 @@
   }
 
   function wikiFilterTypes() {
-    return new Set(["creature", "area", "fish", "shop", "skill", "farming", "pet"]);
+    return new Set(["creature", "area", "fish", "shop", "skill", "feature", "farming", "pet"]);
   }
 
   function sortRecipes(a, b) {
@@ -6182,8 +6994,9 @@
     if (type === "fish") return 2;
     if (type === "shop") return 3;
     if (type === "skill") return 4;
-    if (type === "farming") return 5;
-    if (type === "pet") return 6;
+    if (type === "feature") return 5;
+    if (type === "farming") return 6;
+    if (type === "pet") return 7;
     return 9;
   }
 
@@ -6648,6 +7461,7 @@
     if (type === "fish") return "Fishing";
     if (type === "shop") return "NPC shop";
     if (type === "skill") return "Skill";
+    if (type === "feature") return "Features";
     if (type === "farming") return "Farming";
     if (type === "pet") return "Pets";
     return "Wiki";
