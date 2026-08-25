@@ -4210,7 +4210,8 @@ button.fortification-slot:hover,
 }
 
 .fortification-item-settings input,
-.fortification-item-settings select {
+.fortification-item-settings select,
+.fortification-auto-settings input {
   width: 100%;
   min-height: 36px;
   border: 1px solid var(--line);
@@ -4218,6 +4219,111 @@ button.fortification-slot:hover,
   background: #111816;
   color: var(--text);
   padding: 7px 9px;
+}
+
+.fortification-auto-settings {
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(170px, 230px) minmax(0, 1fr);
+  gap: 8px;
+  align-items: end;
+  padding: 10px;
+  border: 1px solid rgba(77, 163, 217, 0.24);
+  border-radius: 7px;
+  background: rgba(77, 163, 217, 0.045);
+}
+
+.fortification-auto-settings label {
+  display: grid;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.fortification-auto-settings p {
+  align-self: center;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.fortification-consumption {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.fortification-consumption-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.fortification-consumption-head strong {
+  color: #f5df9c;
+  font-size: 12px;
+}
+
+.fortification-consumption-head span {
+  color: var(--muted);
+  font-size: 10px;
+  text-align: right;
+}
+
+.fortification-consumption-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(90px, 1fr));
+  gap: 6px;
+}
+
+.fortification-consumption-grid > span {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  min-height: 42px;
+  padding: 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.fortification-consumption-grid img,
+.fortification-consumption-grid .fortification-option-fallback,
+.fortification-repair-count i {
+  width: 28px;
+  height: 28px;
+  grid-row: auto;
+  object-fit: contain;
+  font-size: 14px;
+}
+
+.fortification-repair-count i {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.18);
+  color: #f5df9c;
+  font-style: normal;
+}
+
+.fortification-consumption-grid small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.fortification-consumption-grid b {
+  color: #ffe3a0;
+  font-size: 13px;
 }
 
 .fortification-actions {
@@ -4263,6 +4369,114 @@ button.fortification-slot:hover,
   gap: 7px;
 }
 
+.fortification-auto-result {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(77, 163, 217, 0.5);
+  border-left: 4px solid var(--blue);
+  border-radius: 7px;
+  background: rgba(77, 163, 217, 0.07);
+}
+
+.fortification-auto-result.is-success {
+  border-color: rgba(92, 196, 126, 0.48);
+  border-left-color: var(--green);
+  background: rgba(92, 196, 126, 0.07);
+}
+
+.fortification-auto-result.is-failure {
+  border-left-color: var(--red);
+}
+
+.fortification-auto-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fortification-auto-result-head > span {
+  display: grid;
+  gap: 2px;
+}
+
+.fortification-auto-result-head small,
+.fortification-auto-result-stats small,
+.fortification-auto-perks small {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.fortification-auto-result-head strong {
+  color: #f5df9c;
+  font-size: 15px;
+}
+
+.fortification-auto-result-head > b {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.fortification-auto-result-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(120px, 1fr));
+  gap: 7px;
+}
+
+.fortification-auto-result-stats > span {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.fortification-auto-result-stats b {
+  color: #ffe3a0;
+  font-size: 14px;
+}
+
+.fortification-auto-result-perks {
+  display: grid;
+  gap: 7px;
+}
+
+.fortification-auto-result-perks > strong {
+  color: #f5df9c;
+  font-size: 12px;
+}
+
+.fortification-auto-perks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.fortification-auto-perks > span {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  padding: 8px 10px;
+  border: 1px solid rgba(77, 163, 217, 0.45);
+  border-radius: 6px;
+  background: rgba(77, 163, 217, 0.08);
+}
+
+.fortification-auto-perks b {
+  color: #82cef8;
+  font-size: 13px;
+}
+
+.fortification-auto-no-perks {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .fortification-current-perks > strong,
 .fortification-history > strong {
   color: #f5df9c;
@@ -4301,7 +4515,8 @@ button.fortification-slot:hover,
   padding: 7px 9px;
   border-left: 3px solid var(--line);
   background: rgba(255, 255, 255, .025);
-  font-size: 10px;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .fortification-log.is-success { border-left-color: var(--green); }
@@ -4364,6 +4579,10 @@ button.fortification-slot:hover,
   gap: 10px;
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
+}
+
+.fortification-pool-search {
+  max-width: 420px;
 }
 
 .fortification-odds-grid {
@@ -4618,6 +4837,10 @@ button.fortification-slot:hover,
   .fortification-item-settings {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .fortification-consumption-grid {
+    grid-template-columns: repeat(4, minmax(90px, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -4718,9 +4941,23 @@ button.fortification-slot:hover,
   .fortification-simulator-metrics,
   .fortification-options,
   .fortification-item-settings,
+  .fortification-auto-settings,
   .fortification-actions,
   .fortification-odds-grid {
     grid-template-columns: 1fr;
+  }
+
+  .fortification-consumption-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .fortification-consumption-head span {
+    text-align: left;
+  }
+
+  .fortification-consumption-grid {
+    grid-template-columns: repeat(2, minmax(100px, 1fr));
   }
 
   .fortification-workbench {
@@ -4740,6 +4977,15 @@ button.fortification-slot:hover,
   }
 
   .fortification-log {
+    grid-template-columns: 1fr;
+  }
+
+  .fortification-auto-result-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .fortification-auto-result-stats {
     grid-template-columns: 1fr;
   }
 

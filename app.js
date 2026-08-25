@@ -392,6 +392,7 @@
       .filter((entry) => filter === "all" || entry.type === filter)
       .filter((entry) => !query || wikiEntryMatches(entry, query))
       .sort(sortWikiEntries) : [];
+    const nestedWikiMatches = includeWiki ? nestedWikiSearchMatches(query, filter) : [];
 
     const matchingItems = allMatchingItems.slice(0, filter === "items" ? 160 : 35);
     const recipeLimit = (filter === "cooking" || filter === "potion" || filter === "poison") ? filteredRecipes.length : (filter === "all" ? 95 : 160);
@@ -402,6 +403,7 @@
       includeItems ? `${allMatchingItems.length} items` : "",
       includeRecipes ? `${filteredRecipes.length} recipes` : "",
       includeWiki ? `${filteredWiki.length} wiki entries` : "",
+      nestedWikiMatches.length ? `${nestedWikiMatches.length} ability/perk matches` : "",
     ].filter(Boolean).join(", ");
 
     for (const item of matchingItems) {
@@ -412,11 +414,15 @@
       els.resultList.appendChild(renderResultRecipeRow(recipe));
     }
 
+    for (const match of nestedWikiMatches.slice(0, 80)) {
+      els.resultList.appendChild(renderNestedWikiSearchRow(match));
+    }
+
     for (const entry of filteredWiki.slice(0, wikiLimit)) {
       els.resultList.appendChild(renderWikiResultRow(entry));
     }
 
-    if (!matchingItems.length && !filteredRecipes.length && !filteredWiki.length) {
+    if (!matchingItems.length && !filteredRecipes.length && !filteredWiki.length && !nestedWikiMatches.length) {
       const empty = document.createElement("div");
       empty.className = "empty-note";
       empty.textContent = "No matches found. Try an English item name, monster, map, NPC shop, or internal item name such as IronIngot.";
@@ -424,7 +430,8 @@
     } else if (
       allMatchingItems.length > matchingItems.length ||
       filteredRecipes.length > recipeLimit ||
-      filteredWiki.length > wikiLimit
+      filteredWiki.length > wikiLimit ||
+      nestedWikiMatches.length > 80
     ) {
       const more = document.createElement("div");
       more.className = "empty-note";
@@ -679,6 +686,73 @@
     row.appendChild(body);
     row.addEventListener("click", () => navigate({ type: "wiki", id: entry.id }));
     return row;
+  }
+
+  function nestedWikiSearchMatches(query, filter) {
+    if (!query || query.length < 2) return [];
+    const matches = [];
+    if (filter === "all" || filter === "pet") {
+      const petEntry = wikiEntriesById.get("pet:overview");
+      for (const row of petAbilityRows(petEntry?.pets || [])) {
+        if (petAbilityRowText(row).includes(query)) {
+          matches.push({ type: "pet-ability", entry: petEntry, row });
+        }
+      }
+    }
+    if (filter === "all" || filter === "feature") {
+      for (const level of [10, 20]) {
+        const rows = fortificationData.milestonePools?.[String(level)] || [];
+        const chance = rows.length ? 100 / rows.length : 0;
+        for (const row of rows) {
+          const text = normalize([row.id, row.name, formatFortificationBonus(row), `+${level}`, "fortification milestone perk bonus pool"].join(" "));
+          if (text.includes(query)) {
+            matches.push({ type: "fortification-perk", level, chance, row });
+          }
+        }
+      }
+    }
+    return matches.sort((a, b) => {
+      if (a.type !== b.type) return a.type.localeCompare(b.type);
+      if (a.type === "pet-ability") {
+        return a.row.pet.name.localeCompare(b.row.pet.name) || Number(a.row.level) - Number(b.row.level);
+      }
+      return a.level - b.level || a.row.name.localeCompare(b.row.name);
+    });
+  }
+
+  function renderNestedWikiSearchRow(match) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "result-row nested-search-result";
+    if (match.type === "pet-ability") {
+      const { entry, row } = match;
+      button.appendChild(renderInlineImage(row.pet.icon, row.pet.name, "PT"));
+      const body = document.createElement("span");
+      body.innerHTML = `
+        <span class="result-title">${escapeHtml(row.pet.name)}</span>
+        <span class="result-subtitle">Level ${escapeHtml(row.level)} · ${escapeHtml(row.detail)}</span>
+        <span class="result-badge">Pet ability</span>
+      `;
+      button.appendChild(body);
+      button.dataset.petTooltipHtml = petTooltipHtml(row.pet, row.level);
+      button.addEventListener("click", () => {
+        navigate({ type: "wiki", id: entry.id });
+        renderPetInspector(entry, row.pet, row.level);
+      });
+      return button;
+    }
+
+    const feature = wikiEntriesById.get("feature:fortification");
+    const body = document.createElement("span");
+    body.innerHTML = `
+      <span class="result-title">${escapeHtml(match.row.name)} ${escapeHtml(formatFortificationBonus(match.row) || "Master bonus")}</span>
+      <span class="result-subtitle">Fortification +${match.level} milestone pool · ${match.chance.toFixed(2)}% per slot</span>
+      <span class="result-badge">+${match.level} perk</span>
+    `;
+    button.appendChild(renderWikiIcon(feature || { name: `+${match.level}`, type: "feature" }));
+    button.appendChild(body);
+    button.addEventListener("click", () => navigate({ type: "wiki", id: feature.id }));
+    return button;
   }
 
   function navigate(next, replace) {
@@ -3336,11 +3410,17 @@
         <label><span>Existing Master bonus</span><select class="fortification-master-bonus"><option value="">No Master bonus</option></select></label>
         <label><span>Master value %</span><input class="fortification-master-value" type="number" min="0" max="100" step="0.01" value="0" disabled></label>
       </div>
+      <div class="fortification-auto-settings">
+        <label><span>Target Fortification</span><input class="fortification-target-level" type="number" min="1" max="20" value="10"></label>
+        <button class="primary-action fortification-auto-run" type="button" disabled>Run to +10</button>
+        <p>Runs one random simulation to the target. Broken armor is repaired automatically and counted in the breakdown.</p>
+      </div>
       <div class="fortification-actions">
         <button class="primary-action fortification-attempt" type="button" disabled>Choose armor</button>
         <button class="secondary-action fortification-repair" type="button" hidden>Repair armor</button>
         <span class="fortification-attempt-status">Select a light or heavy armor piece.</span>
       </div>
+      <div class="fortification-consumption"></div>
       <div class="fortification-current-perks"></div>
       <div class="fortification-history"></div>
       <div class="fortification-picker">
@@ -3360,8 +3440,11 @@
     const masterBonusInput = q(".fortification-master-bonus");
     const masterValueInput = q(".fortification-master-value");
     const attemptButton = q(".fortification-attempt");
+    const autoButton = q(".fortification-auto-run");
+    const targetLevelInput = q(".fortification-target-level");
     const repairButton = q(".fortification-repair");
     const status = q(".fortification-attempt-status");
+    const consumption = q(".fortification-consumption");
     const perks = q(".fortification-current-perks");
     const history = q(".fortification-history");
     const picker = q(".fortification-picker");
@@ -3369,7 +3452,25 @@
     const armorGrid = q(".fortification-armor-grid");
     const oilButton = q('[data-option="oil"]');
     const protectionButtons = Array.from(wrap.querySelectorAll("[data-protection]"));
-    const sim = { armorId: "", level: 0, durability: 100, bonuses: [], useOil: false, protection: "none", attempts: 0, kits: 0, log: [] };
+    const sim = {
+      armorId: "",
+      level: 0,
+      durability: 100,
+      bonuses: [],
+      useOil: false,
+      protection: "none",
+      attempts: 0,
+      successes: 0,
+      failures: 0,
+      kits: 0,
+      kitUsage: {},
+      oils: 0,
+      threads: 0,
+      seals: 0,
+      repairs: 0,
+      autoSummary: null,
+      log: [],
+    };
     const armorCandidates = fortificationArmorItems();
 
     const renderPicker = () => {
@@ -3401,8 +3502,26 @@
       masterValueInput.disabled = !masterBonusInput.value;
     };
 
+    const resetProgress = () => {
+      sim.level = 0;
+      sim.durability = 100;
+      sim.bonuses = [];
+      sim.attempts = 0;
+      sim.successes = 0;
+      sim.failures = 0;
+      sim.kits = 0;
+      sim.kitUsage = {};
+      sim.oils = 0;
+      sim.threads = 0;
+      sim.seals = 0;
+      sim.repairs = 0;
+      sim.autoSummary = null;
+      sim.log = [];
+    };
+
     const selectArmor = (itemId) => {
-      sim.armorId = itemId; sim.level = 0; sim.durability = 100; sim.bonuses = []; sim.log = [];
+      sim.armorId = itemId;
+      resetProgress();
       armorClassInput.value = fortificationArmorClass(itemId).startsWith("Light") ? "light" : "heavy";
       requiredSkillInput.value = String(fortificationRequiredSkill(itemId));
       masterBonusInput.value = ""; masterValueInput.value = "0";
@@ -3415,30 +3534,74 @@
       sim.log = sim.log.slice(0, 8);
     };
 
-    const attempt = () => {
+    const attempt = ({ render = true, recordLog = true } = {}) => {
       if (!sim.armorId || sim.level >= 20 || sim.durability < 100) return;
       const nextLevel = sim.level + 1;
       const safe = nextLevel <= Number(fortificationData.safeSuccessLevel || 2);
       const chance = safe ? 1 : sim.useOil ? Number(fortificationData.temperingOilSuccessChance || 0.75) : Number(fortificationData.successChance || 0.7);
       const roll = fortificationRandom();
       const success = roll < chance;
-      sim.attempts += 1; sim.kits += 1; sim.useOil = false;
+      const skill = clamp(Math.floor(Number(requiredSkillInput.value) || 0), 0, 60);
+      const kitId = fortificationKitForSkill(skill);
+      sim.attempts += 1;
+      sim.kits += 1;
+      sim.kitUsage[kitId] = (sim.kitUsage[kitId] || 0) + 1;
+      if (sim.useOil) sim.oils += 1;
+      if (sim.protection === "thread") sim.threads += 1;
+      if (sim.protection === "seal") sim.seals += 1;
       if (success) {
+        sim.successes += 1;
         sim.level = nextLevel;
         let detail = `Roll ${(roll * 100).toFixed(2)}% against ${(chance * 100).toFixed(0)}%.`;
         if ((nextLevel === 10 || nextLevel === 20) && fortificationHasMilestoneSlot(sim.armorId)) {
           const bonus = rollFortificationMilestone(nextLevel, armorClassInput.value, Number(requiredSkillInput.value), masterBonusInput.value, Number(masterValueInput.value));
           if (bonus) { sim.bonuses.push(bonus); detail += ` Milestone: ${bonus.name} ${formatFortificationBonus(bonus)}.`; }
         }
-        addLog("success", `Fortified to +${nextLevel}`, detail);
+        if (recordLog) addLog("success", `Fortified to +${nextLevel}`, detail);
       } else if (sim.protection === "seal") {
-        sim.protection = "none";
-        addLog("protected", `Failed at +${nextLevel}`, "Mirror Armor Seal preserved durability, level, and milestone bonuses.");
+        sim.failures += 1;
+        if (recordLog) addLog("protected", `Failed at +${nextLevel}`, "Mirror Armor Seal preserved durability, level, and milestone bonuses.");
       } else {
+        sim.failures += 1;
         const thread = sim.protection === "thread";
-        sim.protection = "none"; sim.level = 0; sim.bonuses = []; sim.durability = thread ? 100 : 0;
-        addLog("failure", `Failed at +${nextLevel}`, thread ? "Castle Ward Thread preserved durability; level and milestone bonuses were reset." : "Level, milestone bonuses, and durability were reset.");
+        sim.level = 0; sim.bonuses = []; sim.durability = thread ? 100 : 0;
+        if (recordLog) addLog("failure", `Failed at +${nextLevel}`, thread ? "Castle Ward Thread preserved durability; level and milestone bonuses were reset." : "Level, milestone bonuses, and durability were reset.");
       }
+      if (render) update();
+      return { success, nextLevel, chance, roll };
+    };
+
+    const runToTarget = () => {
+      if (!sim.armorId) return;
+      const target = clamp(Math.floor(Number(targetLevelInput.value) || 1), 1, 20);
+      targetLevelInput.value = String(target);
+      if (sim.level >= target) {
+        status.textContent = `Armor is already at or above +${target}.`;
+        return;
+      }
+      const before = fortificationUsageSnapshot(sim);
+      let guard = 0;
+      while (sim.level < target && guard < 250000) {
+        if (sim.durability < 100) {
+          sim.durability = 100;
+          sim.repairs += 1;
+        }
+        attempt({ render: false, recordLog: false });
+        guard += 1;
+      }
+      const used = fortificationUsageDelta(before, fortificationUsageSnapshot(sim));
+      sim.autoSummary = {
+        target,
+        reached: sim.level >= target,
+        finalLevel: sim.level,
+        bonuses: sim.bonuses.map((bonus) => ({ ...bonus })),
+        ...used,
+      };
+      addLog(
+        sim.level >= target ? "success" : "failure",
+        sim.level >= target ? `Auto run reached +${target}` : `Auto run stopped before +${target}`,
+        `${used.attempts} attempts · ${used.failures} failures · ${used.kits} kits · ${used.repairs} repairs.`,
+      );
       update();
     };
 
@@ -3450,6 +3613,8 @@
       const nextLevel = Math.min(20, sim.level + 1);
       const safe = nextLevel <= Number(fortificationData.safeSuccessLevel || 2);
       const chance = safe ? 1 : sim.useOil ? Number(fortificationData.temperingOilSuccessChance || 0.75) : Number(fortificationData.successChance || 0.7);
+      const target = clamp(Math.floor(Number(targetLevelInput.value) || 1), 1, 20);
+      targetLevelInput.value = String(target);
       armorSlot.classList.toggle("is-empty", !item);
       armorSlot.innerHTML = item ? `${fortificationImageHtml(item)}<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(fortificationItemSlot(item.id))} · 100% durability</small>` : '<span class="fortification-empty-plus">+</span><strong>Choose armor</strong><small>Click to place an item</small>';
       kitSlot.innerHTML = `${fortificationImageHtml(kit)}<strong>${escapeHtml(kit.name)}</strong><small>Required skill ${skill}</small>`;
@@ -3464,9 +3629,12 @@
       attemptButton.disabled = !item || sim.level >= 20 || sim.durability < 100;
       attemptButton.textContent = !item ? "Choose armor" : sim.level >= 20 ? "Maximum +20" : sim.durability < 100 ? "Repair required" : `Fortify to +${nextLevel} · ${(chance * 100).toFixed(0)}%`;
       repairButton.hidden = sim.durability >= 100;
+      autoButton.disabled = !item || sim.level >= target;
+      autoButton.textContent = sim.level >= target ? `Reached +${target}` : `Run to +${target}`;
       status.textContent = fortificationAttemptHelp(item, sim, safe);
+      consumption.innerHTML = renderFortificationConsumption(sim);
       perks.innerHTML = sim.bonuses.length ? `<strong>Milestone bonuses</strong><div>${sim.bonuses.map((bonus) => `<span><small>${escapeHtml(bonus.source)}</small><b>${escapeHtml(bonus.name)} ${escapeHtml(formatFortificationBonus(bonus))}</b></span>`).join("")}</div>` : `<strong>Milestone bonuses</strong><p>${fortificationMilestoneHelp(sim.armorId)}</p>`;
-      history.innerHTML = sim.log.length ? `<strong>Attempt history</strong>${sim.log.map((row) => `<div class="fortification-log is-${row.tone}"><b>${escapeHtml(row.title)}</b><span>${escapeHtml(row.detail)}</span></div>`).join("")}` : "";
+      history.innerHTML = `${renderFortificationAutoResult(sim)}${sim.log.length ? `<strong>Attempt history</strong>${sim.log.map((row) => `<div class="fortification-log is-${row.tone}"><b>${escapeHtml(row.title)}</b><span>${escapeHtml(row.detail)}</span></div>`).join("")}` : ""}`;
     };
 
     armorSlot.addEventListener("click", () => picker.classList.toggle("is-open"));
@@ -3482,9 +3650,11 @@
       update();
     });
     masterValueInput.addEventListener("input", update);
-    attemptButton.addEventListener("click", attempt);
-    repairButton.addEventListener("click", () => { sim.durability = 100; addLog("protected", "Armor repaired", "Durability restored to 100%."); update(); });
-    q(".fortification-reset").addEventListener("click", () => { sim.level = 0; sim.durability = 100; sim.bonuses = []; sim.useOil = false; sim.protection = "none"; sim.attempts = 0; sim.kits = 0; sim.log = []; update(); });
+    attemptButton.addEventListener("click", () => attempt());
+    autoButton.addEventListener("click", runToTarget);
+    targetLevelInput.addEventListener("input", update);
+    repairButton.addEventListener("click", () => { sim.durability = 100; sim.repairs += 1; addLog("protected", "Armor repaired", "Durability restored to 100%."); update(); });
+    q(".fortification-reset").addEventListener("click", () => { resetProgress(); sim.useOil = false; sim.protection = "none"; update(); });
     q(".fortification-odds").appendChild(renderFortificationOdds());
     renderMasterOptions(); renderPicker(); update();
     block.appendChild(wrap);
@@ -3574,7 +3744,91 @@
 
   function fortificationConsumableHtml(itemId, detail, active) {
     const item = itemRecord(itemId);
-    return `${fortificationImageHtml(item)}<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(detail)}</small>${active ? '<span class="fortification-selected-mark">Selected</span>' : ""}`;
+    return `${fortificationImageHtml(item)}<strong>${escapeHtml(item.name)}</strong><small>${escapeHtml(detail)}</small>${active ? '<span class="fortification-selected-mark">Locked</span>' : ""}`;
+  }
+
+  function fortificationUsageSnapshot(sim) {
+    return {
+      attempts: sim.attempts,
+      successes: sim.successes,
+      failures: sim.failures,
+      kits: sim.kits,
+      kitUsage: { ...sim.kitUsage },
+      oils: sim.oils,
+      threads: sim.threads,
+      seals: sim.seals,
+      repairs: sim.repairs,
+    };
+  }
+
+  function fortificationUsageDelta(before, after) {
+    const kitUsage = {};
+    for (const itemId of new Set([...Object.keys(before.kitUsage || {}), ...Object.keys(after.kitUsage || {})])) {
+      kitUsage[itemId] = (after.kitUsage?.[itemId] || 0) - (before.kitUsage?.[itemId] || 0);
+    }
+    return {
+      attempts: after.attempts - before.attempts,
+      successes: after.successes - before.successes,
+      failures: after.failures - before.failures,
+      kits: after.kits - before.kits,
+      kitUsage,
+      oils: after.oils - before.oils,
+      threads: after.threads - before.threads,
+      seals: after.seals - before.seals,
+      repairs: after.repairs - before.repairs,
+    };
+  }
+
+  function renderFortificationConsumption(sim) {
+    const kitRows = (fortificationData.kitTiers || []).map((tier) => ({
+      itemId: tier.itemId,
+      count: sim.kitUsage[tier.itemId] || 0,
+    }));
+    const rows = [
+      ...kitRows,
+      { itemId: "ShatteredTemperingOil", count: sim.oils },
+      { itemId: "CastleWardThread", count: sim.threads },
+      { itemId: "MirrorArmorSeal", count: sim.seals },
+    ];
+    const summary = sim.autoSummary
+      ? `<span>Last auto run: ${sim.autoSummary.reached ? `reached +${sim.autoSummary.target}` : `stopped before +${sim.autoSummary.target}`} in ${sim.autoSummary.attempts} attempts</span>`
+      : `<span>${sim.attempts} attempts · ${sim.successes} successes · ${sim.failures} failures</span>`;
+    return `
+      <div class="fortification-consumption-head"><strong>Consumables used</strong>${summary}</div>
+      <div class="fortification-consumption-grid">
+        ${rows.map(({ itemId, count }) => {
+          const item = itemRecord(itemId);
+          return `<span>${fortificationImageHtml(item)}<small>${escapeHtml(item.name)}</small><b>${escapeHtml(count)}</b></span>`;
+        }).join("")}
+        <span class="fortification-repair-count"><i>↻</i><small>Armor repairs</small><b>${escapeHtml(sim.repairs)}</b></span>
+      </div>
+    `;
+  }
+
+  function renderFortificationAutoResult(sim) {
+    const result = sim.autoSummary;
+    if (!result) return "";
+    const slot = sim.armorId ? fortificationItemSlot(sim.armorId) : "";
+    const receivesMilestones = fortificationHasMilestoneSlot(sim.armorId);
+    const perks = result.bonuses?.length
+      ? `<div class="fortification-auto-perks">${result.bonuses.map((bonus) => `<span><small>${escapeHtml(bonus.source)}</small><b>${escapeHtml(bonus.name)} ${escapeHtml(formatFortificationBonus(bonus))}</b></span>`).join("")}</div>`
+      : `<p class="fortification-auto-no-perks">${receivesMilestones
+        ? "No milestone perk was retained in this run."
+        : `No random milestone perks for ${escapeHtml(slot || "this armor slot")}. Only Chest and Legs receive random perks at +10 and +20.`}</p>`;
+    return `
+      <section class="fortification-auto-result ${result.reached ? "is-success" : "is-failure"}">
+        <div class="fortification-auto-result-head">
+          <span><small>Automatic run result</small><strong>${result.reached ? `Reached +${result.target}` : `Stopped at +${result.finalLevel}`}</strong></span>
+          <b>${result.attempts} attempts · ${result.failures} failures · ${result.repairs} repairs</b>
+        </div>
+        <div class="fortification-auto-result-stats">
+          <span><small>Kits used</small><b>${result.kits}</b></span>
+          <span><small>Damage reduction</small><b>-${escapeHtml(formatCompactNumber(fortificationFlatDamageReduction(result.finalLevel)))}</b></span>
+          <span><small>Insensitivity</small><b>${escapeHtml(formatSignedPercent(fortificationInsensitivityBonus(result.finalLevel)))}</b></span>
+        </div>
+        <div class="fortification-auto-result-perks"><strong>Milestone perks gained</strong>${perks}</div>
+      </section>
+    `;
   }
 
   function fortificationAttemptHelp(item, sim, safe) {
@@ -3595,22 +3849,48 @@
   function renderFortificationOdds() {
     const section = document.createElement("section");
     section.className = "fortification-odds-section";
-    section.innerHTML = '<div class="fortification-odds-head"><strong>Exact milestone pools</strong><span>Every row is one equally weighted array slot.</span></div>';
+    section.innerHTML = `
+      <div class="fortification-odds-head"><strong>Exact milestone pools</strong><span>Every row is one equally weighted array slot.</span></div>
+      <label class="feature-bonus-search fortification-pool-search"><span>Search milestone perks</span><input type="search" autocomplete="off" placeholder="speed, health, attack speed, growth..."></label>
+    `;
+    const searchInput = section.querySelector("input");
     const grid = document.createElement("div");
     grid.className = "fortification-odds-grid";
-    for (const level of [10, 20]) {
-      const rows = fortificationData.milestonePools?.[String(level)] || [];
-      const chance = rows.length ? 100 / rows.length : 0;
-      const card = document.createElement("div");
-      card.className = "fortification-odds-card";
-      card.innerHTML = `<div class="fortification-odds-title"><strong>+${level} bonus pool</strong><span>${rows.length} slots · ${chance.toFixed(2)}% each</span></div><div class="fortification-odds-list">${rows.map((row) => `<span><b>${escapeHtml(row.name)}</b><em>${escapeHtml(formatFortificationBonus(row) || "Copies or rolls a Master bonus")}</em><small>${chance.toFixed(2)}%</small></span>`).join("")}</div>`;
-      grid.appendChild(card);
-    }
     section.appendChild(grid);
     const note = document.createElement("p");
     note.className = "fortification-odds-note";
     note.textContent = "Health has three separate slots: 17.65% total at +10 and 23.08% at +20. Copy Master occupies one +20 slot (7.69%).";
     section.appendChild(note);
+    const render = () => {
+      const query = normalize(searchInput.value);
+      grid.innerHTML = "";
+      let total = 0;
+      for (const level of [10, 20]) {
+        const allRows = fortificationData.milestonePools?.[String(level)] || [];
+        const chance = allRows.length ? 100 / allRows.length : 0;
+        const rows = allRows.filter((row) => !query || normalize([row.id, row.name, formatFortificationBonus(row), `+${level}`].join(" ")).includes(query));
+        total += rows.length;
+        const card = document.createElement("div");
+        card.className = "fortification-odds-card";
+        card.innerHTML = `<div class="fortification-odds-title"><strong>+${level} bonus pool</strong><span>${rows.length}${query ? ` of ${allRows.length}` : ""} slots · ${chance.toFixed(2)}% each</span></div><div class="fortification-odds-list">${rows.length ? rows.map((row) => `<span><b>${escapeHtml(row.name)}</b><em>${escapeHtml(formatFortificationBonus(row) || "Copies or rolls a Master bonus")}</em><small>${chance.toFixed(2)}%</small></span>`).join("") : '<p class="empty-note">No matching perk in this pool.</p>'}</div>`;
+        grid.appendChild(card);
+      }
+      note.hidden = Boolean(query);
+      if (query && !total) {
+        note.hidden = false;
+        note.textContent = "No milestone perks matched this search.";
+      } else {
+        note.textContent = query
+          ? `${total} matching milestone perk${total === 1 ? "" : "s"}.`
+          : "Health has three separate slots: 17.65% total at +10 and 23.08% at +20. Copy Master occupies one +20 slot (7.69%).";
+      }
+    };
+    const initialQuery = normalize(state.query);
+    if (initialQuery && [10, 20].some((level) => (fortificationData.milestonePools?.[String(level)] || []).some((row) => normalize([row.id, row.name, formatFortificationBonus(row)].join(" ")).includes(initialQuery)))) {
+      searchInput.value = state.query;
+    }
+    searchInput.addEventListener("input", render);
+    render();
     return section;
   }
 
@@ -4875,6 +5155,9 @@
       <input type="search" autocomplete="off" placeholder="Taming growth 15%, pet attack speed, stun...">
     `;
     const searchInput = searchLabel.querySelector("input");
+    if (state.query && rows.some((row) => petAbilityRowText(row).includes(normalize(state.query)))) {
+      searchInput.value = state.query;
+    }
     wrap.appendChild(searchLabel);
 
     const status = document.createElement("div");
