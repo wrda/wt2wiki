@@ -1751,6 +1751,38 @@ button.shop-item-card:hover {
   margin-top: 16px;
 }
 
+.theorycraft-panel { margin-top: 14px; padding: 14px; border: 1px solid #30453d; background: #11201b; border-radius: 6px; }
+.theorycraft-head, .random-pool-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.theorycraft-head > div { display: grid; gap: 3px; }
+.theorycraft-head strong, .random-pool-head strong { color: #f2d875; }
+.theorycraft-head span, .random-pool-head span, .mechanic-note { color: #9ab5aa; font-size: 12px; }
+.theorycraft-head output { min-width: 64px; color: #75d7ff; font-size: 20px; font-weight: 800; text-align: right; }
+.quality-controls { display: grid; grid-template-columns: minmax(160px, 1fr) 92px; gap: 10px; margin: 12px 0; }
+.quality-controls input { min-width: 0; }
+.quality-controls input[type="number"] { padding: 8px; border: 1px solid #3a5047; background: #0d1815; color: #eef6f1; border-radius: 5px; }
+.mechanic-note { margin: 9px 0 12px; line-height: 1.5; }
+.quality-table, .random-pool-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 7px; }
+.quality-table > div, .random-pool-grid article { min-width: 0; padding: 9px; border: 1px solid #293d35; background: #0e1b17; border-radius: 5px; }
+.quality-table > div { display: grid; gap: 4px; }
+.quality-table strong, .quality-table span, .quality-table b, .random-pool-grid strong, .random-pool-grid b, .random-pool-grid span, .random-pool-grid p { overflow-wrap: anywhere; }
+.quality-table span, .random-pool-grid span, .random-pool-grid p { color: #91aca1; font-size: 11px; }
+.quality-table b, .random-pool-grid b { color: #76d9ff; font-size: 13px; }
+.random-pool-block + .random-pool-block { margin-top: 14px; }
+.random-pool-head { margin-bottom: 8px; }
+.random-pool-grid article > div { display: flex; justify-content: space-between; gap: 8px; }
+.random-pool-grid p { margin: 6px 0 0; line-height: 1.4; }
+.poison-compatibility-note { margin-top: 10px; padding: 10px; border-left: 3px solid #d4b548; background: #0d1915; }
+.poison-compatibility-note strong { color: #f2d875; }
+.poison-compatibility-note p, .poison-compatibility-note small { display: block; margin: 4px 0 0; color: #a8bdb4; line-height: 1.45; }
+
+@media (max-width: 1100px) {
+  .quality-table, .random-pool-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 680px) {
+  .quality-table, .random-pool-grid { grid-template-columns: 1fr; }
+}
+
 .item-tooltip {
   position: fixed;
   z-index: 9999;

@@ -7,6 +7,7 @@
   const items = data.items || {};
   const sourcesByItem = data.sourcesByItem || {};
   const fortificationData = data.fortification || {};
+  const randomBonusPools = data.randomBonusPools || {};
   const wikiEntries = wikiData.entries || [];
   const itemEconomy = wikiData.itemEconomy || {};
   const shopsByItem = wikiData.shopsByItem || {};
@@ -867,6 +868,7 @@
     board.appendChild(renderItemTile(itemId, "", "result"));
     els.formulaBoard.innerHTML = "";
     els.formulaBoard.appendChild(board);
+    appendItemTheorycraftPanels(els.formulaBoard, itemId);
   }
 
   function renderHomePage() {
@@ -1930,8 +1932,8 @@
     weaponLabel.innerHTML = `
       <span>Applied weapon</span>
       <select>
-        <option value="witchcraft"${state.poisonWeaponMode === "witchcraft" ? " selected" : ""}>Witchcraft weapon (100%)</option>
-        <option value="regular"${state.poisonWeaponMode === "regular" ? " selected" : ""}>Regular weapon (80%)</option>
+        <option value="witchcraft"${state.poisonWeaponMode === "witchcraft" ? " selected" : ""}>Eligible silver sword (100%)</option>
+        <option value="regular"${state.poisonWeaponMode === "regular" ? " selected" : ""}>Other quality weapon (80%)</option>
       </select>
     `;
     const weaponSelect = weaponLabel.querySelector("select");
@@ -1955,6 +1957,19 @@
     global.appendChild(cornPie);
 
     section.appendChild(global);
+    const compatibility = document.createElement("div");
+    compatibility.className = "poison-compatibility-note";
+    const fullWeapons = Object.values(items)
+      .filter((item) => item.qualityModel?.itemClass === "WTWeaponItem")
+      .filter((item) => (item.qualityModel.bonuses || []).some((bonus) => bonus.id === "WitchcraftBattleSkill"))
+      .map((item) => item.name)
+      .sort();
+    compatibility.innerHTML = `
+      <strong>Verified weapon rules</strong>
+      <p>Weapon Poison can be applied only to a right-hand quality weapon with a single-item stack. Full efficiency requires the weapon's Witchcraft battle skill flag; the current enchantable list is ${escapeHtml(fullWeapons.join(" and ") || "not found")}. Other eligible quality weapons use 80%. Non-quality exotic weapons are rejected by the client.</p>
+      <small>Final life returned by Life steal and final plague/defense resolution are server-side and are not exposed by the local client files.</small>
+    `;
+    section.appendChild(compatibility);
     return section;
   }
 
@@ -2386,13 +2401,11 @@
         ...weaponPoisonTraitRows(scaled.totals, bottleEffectMultiplier),
         ...weaponPoisonEffectRows(scaled.effects, bottleEffectMultiplier),
       ];
-      const appliedRows = weaponPoisonDisplayMultiplier() === 1
-        ? []
-        : [
-            { label: "Applied weapon display", value: "Regular weapon 80%" },
-            ...weaponPoisonTraitRows(scaled.totals, appliedEffectMultiplier),
-            ...weaponPoisonEffectRows(scaled.effects, appliedEffectMultiplier),
-          ];
+      const displayedRows = [
+        { label: "Applied weapon", value: weaponPoisonDisplayMultiplier() === 1 ? "Eligible silver sword · 100%" : "Other quality weapon · 80%" },
+        ...weaponPoisonTraitRows(scaled.totals, appliedEffectMultiplier),
+        ...weaponPoisonEffectRows(scaled.effects, appliedEffectMultiplier),
+      ];
       const organChargeTotal = roundGameValue(scaled.totals.charges);
       const baseCharges = roundGameValue(organChargeTotal * weaponPoisonChargeBaseMultiplier);
       const finalCharges = roundGameValue(baseCharges * (1 + weaponPoisonChargeBonus()));
@@ -2410,8 +2423,7 @@
         { label: "Bottle charges", value: `${finalCharges}` },
         ...(baseCharges !== finalCharges ? [{ label: "Base charges", value: `${baseCharges}` }] : []),
         ...(organChargeTotal !== baseCharges ? [{ label: "Organ charge total", value: `${organChargeTotal}` }] : []),
-        ...bottleRows,
-        ...appliedRows,
+        ...displayedRows,
       ].filter(Boolean);
       return {
         status: allConfirmed && slotReady ? "known" : "partial",
@@ -2419,7 +2431,7 @@
         title: slotReady
           ? allConfirmed ? "Weapon poison bottle result" : "Mixed original and unverified organs"
           : "One organ selected, choose the second slot",
-        summary: `${finalCharges} charges${bottleRows.length ? ` · ${bottleRows.slice(0, 2).map((row) => `${row.label} ${row.value}`).join(" · ")}` : ""}`,
+        summary: `${finalCharges} charges${displayedRows.length > 1 ? ` · ${displayedRows.slice(1, 3).map((row) => `${row.label} ${row.value}`).join(" · ")}` : ""}`,
         effects: [...new Set(traitRows.filter((row) => row.label !== "Affects on").map((row) => row.label))],
         charges: `${slotReady ? "Final bottle charges" : "Selected organ charge so far"}: ${finalCharges}.`,
         requirements: [...weaponPoisonCraftRequirements, ...new Set(requirementRows)],
@@ -2429,7 +2441,7 @@
           "x1/x2 beside an organ is the stack amount. Selecting the same organ in both cauldron slots counts it twice.",
           "The bottle result sums the two selected organ records from WTWitchcraftOrgan, then applies the x1.2 Weapon Poison bottle effect multiplier.",
           "Weapon poison charges use the ItemEffectValue x1.5 boost found in the local game assembly.",
-          "Regular non-witchcraft weapons display poison combat values at 80% effectiveness.",
+          "The client applies 100% only when the quality weapon has Witchcraft battle skill; other eligible quality weapons use 80%.",
           ...(unknownSelected.length ? [`Unverified selected organs: ${unknownSelected.map(itemName).join(", ")}.`] : []),
           ...(allConfirmed ? [] : ["Only the original organ records above have exact numeric values right now."]),
         ],
@@ -2901,6 +2913,115 @@
     els.formulaBoard.appendChild(flow);
     const guide = renderItemPlayerGuide(recipe.result, { compact: true, title: "How this item works" });
     if (guide) els.formulaBoard.appendChild(guide);
+    appendItemTheorycraftPanels(els.formulaBoard, recipe.result);
+  }
+
+  function appendItemTheorycraftPanels(parent, itemId) {
+    const quality = renderItemQualityCalculator(itemId);
+    if (quality) parent.appendChild(quality);
+    const pools = renderItemRandomBonusPools(itemId);
+    if (pools) parent.appendChild(pools);
+  }
+
+  function qualityScaledValue(value, quality, rounding) {
+    const scaled = Number(value || 0) * Number(quality || 0) / 100;
+    return rounding === "truncate" ? Math.trunc(scaled) : scaled;
+  }
+
+  function qualityBonusText(bonus, quality) {
+    let value = Number(bonus.value || 0);
+    if (bonus.changesByQuality) value = qualityScaledValue(value, quality);
+    if (Number(bonus.maximum || 0) > 0) value = Math.min(value, Number(bonus.maximum));
+    if (bonus.asInteger) value = Math.floor(value);
+    if (["Hatchet", "GatherRate"].includes(bonus.id)) return `x${trimNumber(value)}`;
+    if (bonus.asPercent) {
+      const stable = Math.round(value * 1000000) / 1000000;
+      return `${trimNumber(Math.floor(stable * 1000 + 0.000001) / 10)}%`;
+    }
+    return trimNumber(value);
+  }
+
+  function renderItemQualityCalculator(itemId) {
+    const model = itemRecord(itemId).qualityModel;
+    if (!model) return null;
+    const rows = [
+      ...Object.values(model.attack || {}).map((row) => ({ ...row, kind: "attack" })),
+      ...(model.bonuses || []).map((bonus) => ({ ...bonus, kind: "bonus" })),
+    ];
+    if (!rows.length) return null;
+    const section = document.createElement("section");
+    section.className = "quality-calculator theorycraft-panel";
+    section.innerHTML = `
+      <div class="theorycraft-head"><div><strong>Quality calculator</strong><span>Preview the item's original game values at a chosen quality.</span></div><output>100%</output></div>
+      <div class="quality-controls"><input type="range" min="${model.minQuality || 1}" max="${model.maxQuality || 200}" value="100" step="1"><input type="number" min="${model.minQuality || 1}" max="${model.maxQuality || 200}" value="100" step="1"></div>
+      <p class="mechanic-note">Verified client rule: base value x quality / 100. Weapon damage truncates decimals. Only bonuses marked by the game as quality-changing scale; durability and fixed bonuses stay unchanged.</p>
+      <div class="quality-table"></div>
+    `;
+    const range = section.querySelector('input[type="range"]');
+    const number = section.querySelector('input[type="number"]');
+    const output = section.querySelector("output");
+    const table = section.querySelector(".quality-table");
+    const draw = (raw) => {
+      const quality = clamp(Number(raw) || 100, model.minQuality || 1, model.maxQuality || 200);
+      range.value = quality;
+      number.value = quality;
+      output.textContent = `${quality}%`;
+      table.innerHTML = rows.map((row) => {
+        const base = row.kind === "attack" ? qualityScaledValue(row.value, 100, row.rounding) : qualityBonusText(row, 100);
+        const selected = row.kind === "attack" ? qualityScaledValue(row.value, quality, row.rounding) : qualityBonusText(row, quality);
+        const fixed = row.kind === "bonus" && !row.changesByQuality;
+        return `<div><strong>${escapeHtml(row.label)}</strong><span>${escapeHtml(base)} at 100%</span><b>${escapeHtml(selected)}${fixed ? " · fixed" : ""}</b></div>`;
+      }).join("");
+    };
+    range.addEventListener("input", () => draw(range.value));
+    number.addEventListener("input", () => draw(number.value));
+    draw(100);
+    return section;
+  }
+
+  function itemRandomPoolDefinitions(itemId) {
+    const definitions = [];
+    for (const recipe of recipesByResult.get(itemId) || []) {
+      if (recipe.randomBonusList && recipe.randomBonusCount) definitions.push({ id: recipe.randomBonusList, count: recipe.randomBonusCount, label: "Random bonus pool" });
+      if (recipe.randomBonusRareList && recipe.randomBonusRareCount) definitions.push({ id: recipe.randomBonusRareList, count: recipe.randomBonusRareCount, label: "Rare bonus pool" });
+    }
+    return definitions.filter((row, index, all) => all.findIndex((other) => other.id === row.id && other.label === row.label) === index);
+  }
+
+  function randomBonusExplanation(bonusId) {
+    const key = statKey(bonusId);
+    if (key.includes("defensefrommobsboss")) return "Conditional protection against boss enemies. The final damage conversion is resolved by the server and is not present in the client files.";
+    if (key.includes("defensefrommobs")) return "Conditional protection against non-player enemies. It modifies monster damage separately from the armor's normal Defense; the final server formula is not exposed.";
+    if (key.includes("lifesteal")) return "Adds life-steal strength. The client exposes the listed bonus, but final healing per hit is resolved after combat processing on the server.";
+    if (key.includes("plague")) return "Affects plague-type damage or protection. Plague is a separate combat value; its final target interaction is server-resolved.";
+    if (key.includes("xpgain") || key.includes("growth")) return "Increases experience or skill growth for the named activity.";
+    if (key.includes("speed")) return "Improves the speed of the named action or activity.";
+    if (key.includes("double")) return "Gives the listed chance for an extra result when the matching action succeeds.";
+    if (key.includes("save")) return "Gives the listed chance to preserve the matching resource.";
+    return "A possible crafted-item bonus from this exact local game pool.";
+  }
+
+  function renderItemRandomBonusPools(itemId) {
+    const definitions = itemRandomPoolDefinitions(itemId).filter((definition) => randomBonusPools[definition.id]?.length);
+    if (!definitions.length) return null;
+    const section = document.createElement("section");
+    section.className = "random-pools theorycraft-panel";
+    section.innerHTML = `<div class="theorycraft-head"><div><strong>Crafted bonus pools</strong><span>Exact slots from the current local game files.</span></div></div><p class="mechanic-note">Each roll chooses one array slot uniformly. Repeated entries are intentional and raise that result's probability. Normal and rare rolls use their own pools.</p>`;
+    for (const definition of definitions) {
+      const sourceRows = randomBonusPools[definition.id] || [];
+      const grouped = new Map();
+      for (const row of sourceRows) {
+        const key = `${row.id}|${row.value}`;
+        const current = grouped.get(key) || { ...row, slots: 0 };
+        current.slots += 1;
+        grouped.set(key, current);
+      }
+      const block = document.createElement("div");
+      block.className = "random-pool-block";
+      block.innerHTML = `<div class="random-pool-head"><strong>${escapeHtml(definition.label)} · ${escapeHtml(definition.count)} roll${definition.count === 1 ? "" : "s"}</strong><span>${sourceRows.length} equally weighted slots</span></div><div class="random-pool-grid">${[...grouped.values()].map((row) => `<article><div><strong>${escapeHtml(row.name)}</strong><b>${escapeHtml(row.valueText)}</b></div><span>${escapeHtml(row.slots)} slot${row.slots === 1 ? "" : "s"} · ${trimNumber(row.slots / sourceRows.length * 100)}%</span><p>${escapeHtml(randomBonusExplanation(row.id))}</p></article>`).join("")}</div>`;
+      section.appendChild(block);
+    }
+    return section;
   }
 
   function renderStationButtons(stations) {
@@ -7334,13 +7455,17 @@
   }
 
   function itemStatSearchText(itemId) {
-    return itemDetailGroups(itemId)
+    const details = itemDetailGroups(itemId)
       .flatMap((group) => [
         group.basis || "",
         group.category || "",
         ...group.rows.flatMap((row) => [row.label, row.value]),
       ])
       .join(" ");
+    const poolText = itemRandomPoolDefinitions(itemId)
+      .flatMap((definition) => (randomBonusPools[definition.id] || []).flatMap((row) => [row.id, row.name, row.valueText]))
+      .join(" ");
+    return `${details} ${poolText}`.trim();
   }
 
   function compactItemDetailText(itemId, limit = 4) {
@@ -7513,7 +7638,7 @@
 
     if (key === "type") return "The broad item category. It tells you whether this is equipment, a weapon, food, material, or another utility item.";
     if (key === "slot") return "Where the item is equipped. Only one item can normally occupy the same equipment slot.";
-    if (key === "quality") return "This wiki shows gear at 100% quality for clean comparison. In game, better quality usually means stronger rolls for damage, defense, tool power, durability, or bonuses.";
+    if (key === "quality") return "The client scales weapon damage and only bonuses marked as quality-changing by base x quality / 100. Durability and fixed bonuses do not scale.";
     if (key === "requiredskill") return `You need ${value} to use this item properly. If the item is a tool, this also tells you which activity it belongs to.`;
     if (key === "durability") return "How much use the item can take before it needs repair or replacement. Higher durability lasts longer during combat, gathering, or crafting use.";
     if (key === "damage") return "The normal hit damage range. The first number is the lower roll, the second is the higher roll.";
@@ -7532,9 +7657,9 @@
     if (key === "bucket") return "Tool power for bucket actions, usually water or liquid handling.";
     if (key === "fishingpole") return "Fishing rod power. Higher values improve fishing performance with this pole.";
     if (key === "gatherrate") return "General gathering efficiency. For tools, higher gather rate usually means fewer actions or less time to collect resources.";
-    if (key === "defense") return "Reduces incoming damage. Higher defense makes the character tougher against attacks.";
-    if (key === "plaguedefense") return "Protection against plague-type damage or enemies. Useful in infected or plague-heavy areas.";
-    if (key === "absorption") return "Flat or direct damage soak before damage reaches you. Higher absorption helps reduce each incoming hit.";
+    if (key === "defense") return "The armor's general defensive value. The client exposes the stat, but the final damage-reduction conversion is resolved by the server and is not available as a reliable local formula.";
+    if (key === "plaguedefense") return "Conditional protection for plague damage. It is separate from normal Defense; the exact final server conversion is not exposed in the client files.";
+    if (key === "absorption") return "A separate layer from Defense that reduces incoming damage. The displayed value is verified, while the final per-hit calculation is server-resolved.";
     if (key === "plagueabsorption") return "Damage soak against plague-type hits. Useful when fighting infected or plague enemies.";
     if (key === "dodge") return "Chance or bonus to avoid attacks. More dodge means more hits can miss you.";
     if (key === "dodgeskill") return "Bonus connected to dodge skill growth or dodge effectiveness. It supports evasive builds.";
@@ -7570,12 +7695,13 @@
     if (key.includes("damagetoplayers")) return "Extra damage against players. Useful for PvP-focused gear or weapons.";
     if (key.includes("damagefromplayers") || key.includes("defensefromplayers")) return "Extra protection against players. Useful for PvP-focused gear.";
     if (key.includes("damagetomobs")) return "Extra damage against monsters and non-player enemies.";
-    if (key.includes("defensefrommobs")) return "Extra protection against monsters and non-player enemies.";
+    if (key.includes("defensefrommobs")) return "Conditional protection against monsters. It applies separately from normal Defense; the exact amount removed from a hit is calculated by the server and is not exposed locally.";
     if (key.includes("damagetoanimals")) return "Extra damage against animals. Useful for hunting.";
     if (key.includes("damagetoboss")) return "Extra damage against boss enemies.";
-    if (key.includes("defensefromboss")) return "Extra protection against boss enemies.";
+    if (key.includes("defensefromboss")) return "Conditional protection against boss enemies. The listed bonus is verified, but its final damage conversion is server-side.";
     if (key.includes("damagetoinsects") || key.includes("damagetocoldblooded")) return "Extra damage against that enemy family. Use it when hunting those specific targets.";
-    if (key.includes("plaguedamage")) return "Adds or modifies plague-type damage. Useful against targets affected by plague interactions.";
+    if (key.includes("plaguedamage")) return "Adds a separate plague-damage component. The client keeps it apart from normal damage; target resistance and the final hit result are resolved by the server.";
+    if (key.includes("lifesteal")) return "Adds life-steal strength to attacks. Weapon Poison scales this value to 100% or 80% by weapon type, but the health actually returned per hit is calculated by the server.";
     if (key.includes("negativeeffectchance")) return "Changes the chance of receiving negative effects. Higher avoidance/decrease values make debuffs less likely.";
     if (key.includes("negativeeffecttime")) return "Reduces how long negative effects last on you.";
     if (key.includes("ignorenextstun")) return "Chance to ignore the next stun after being stunned. Useful against enemies or players with stun effects.";
